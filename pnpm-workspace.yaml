@@ -1,5 +1,11 @@
 packages:
   - .
+
 ignoredBuiltDependencies:
+  - '@prisma/client'
+  - '@prisma/engines'
+  - prisma
   - sharp
   - unrs-resolver
+
+storeDir: /home/dag/.local/share/pnpm/store/v10

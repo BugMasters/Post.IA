@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: postia_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postia
+      POSTGRES_PASSWORD: postia
+      POSTGRES_DB: postia
+    ports:
+      - "5432:5432"
+    volumes:
+      - postia_pg:/var/lib/postgresql/data
+
+volumes:
+  postia_pg:
