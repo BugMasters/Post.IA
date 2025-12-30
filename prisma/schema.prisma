@@ -20,4 +20,24 @@ model User {
   name      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  briefings Briefing[]
+}
+
+model Briefing {
+  id              String    @id @default(cuid())
+  userId          String
+  goal            String
+  audience        String
+  audienceLevel   String
+  offer           String
+  differentiation String
+  tone            String[]
+  avoid           String[]
+  cta             String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
