@@ -1,355 +1,77 @@
-"use client";
-
-import { useState, useTransition } from "react";
-import Link from "next/link";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
-import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import BriefingForm from "@/components/briefing/briefing-form";
+import { ensureDevUser } from "@/infra/dev/devUser";
+import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import {
+  BriefingFormValues,
   audienceLevelOptions,
   audienceOptions,
-  briefingSchema,
   ctaOptions,
   goalOptions,
-  BriefingFormValues,
-  toneOptions,
-  avoidOptions,
 } from "@/domain/briefing";
-import {
-  SaveBriefingResult,
-  saveBriefingAction,
-} from "@/features/briefing/briefing.actions";
 
-const defaultBriefingValues: BriefingFormValues = {
-  goal: goalOptions[0],
-  audience: audienceOptions[0],
-  audienceLevel: audienceLevelOptions[0],
-  tone: [],
-  avoid: [],
-  cta: ctaOptions[0],
-  offer: "",
-  differentiation: ""
-};
+const fallbackGoal = goalOptions[0];
+const fallbackAudience = audienceOptions[0];
+const fallbackAudienceLevel = audienceLevelOptions[0];
+const fallbackCta = ctaOptions[0];
 
-export default function BriefingPage() {
-  const [result, setResult] = useState<SaveBriefingResult | null>(null);
-  const [isPending, startTransition] = useTransition();
+type BriefingRecord = Awaited<ReturnType<typeof getLatestBriefingForUser>>;
 
-  const {
-    register,
-    handleSubmit,
-    watch,
-    setValue,
-    formState: { errors },
-  } = useForm<BriefingFormValues>({
-    resolver: zodResolver(briefingSchema),
-    defaultValues: defaultBriefingValues,
-  });
+function ensureOption<T extends readonly string[]>(
+  value: unknown,
+  options: T,
+  fallback: T[number]
+): T[number] {
+  if (typeof value === "string" && options.includes(value as T[number])) {
+    return value as T[number];
+  }
+  return fallback;
+}
 
-  const selectedTones = watch("tone") ?? [];
-  const selectedAvoid = watch("avoid") ?? [];
-  const toneLimitReached = selectedTones.length >= 2;
-  const toneCountText = `${selectedTones.length}/2 selecionados`;
+function normalizeStringArray(value: string[] | null | undefined) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
 
-  const toggleTone = (tone: string) => {
-    const currentTones = selectedTones ?? [];
-
-    if (currentTones.includes(tone)) {
-      setValue("tone", currentTones.filter((item) => item !== tone), {
-        shouldValidate: true,
-      });
-      return;
-    }
-
-    if (toneLimitReached) return;
-
-    setValue("tone", [...currentTones, tone], {
-      shouldValidate: true,
-    });
+function buildInitialValues(briefing: BriefingRecord | null): BriefingFormValues {
+  return {
+    goal: ensureOption(briefing?.goal, goalOptions, fallbackGoal),
+    audience: ensureOption(briefing?.audience, audienceOptions, fallbackAudience),
+    audienceLevel: ensureOption(
+      briefing?.audienceLevel,
+      audienceLevelOptions,
+      fallbackAudienceLevel
+    ),
+    offer: typeof briefing?.offer === "string" ? briefing.offer : "",
+    differentiation:
+      typeof briefing?.differentiation === "string" ? briefing.differentiation : "",
+    tone: normalizeStringArray(briefing?.tone),
+    avoid: normalizeStringArray(briefing?.avoid),
+    cta: ensureOption(briefing?.cta, ctaOptions, fallbackCta),
   };
+}
 
-  const toggleAvoid = (value: string) => {
-    const currentAvoid = selectedAvoid ?? [];
-
-    if (currentAvoid.includes(value)) {
-      setValue("avoid", currentAvoid.filter((item) => item !== value), {
-        shouldValidate: true,
-      });
-      return;
-    }
-
-    setValue("avoid", [...currentAvoid, value], {
-      shouldValidate: true,
-    });
-  };
-
-  const statusMessage = () => {
-    if (!result) {
-      return null;
-    }
-
-    if (result.ok) {
-      return (
-        <p className="text-sm text-green-500">
-          Briefing salvo! Acesse o dashboard para revisar o resumo.
-        </p>
-      );
-    }
-
-    return (
-      <p className="text-sm text-destructive-500">
-        {result.error || "Não foi possível salvar o briefing."}
-      </p>
-    );
-  };
-
-  const onSubmit = (data: BriefingFormValues) => {
-    const formData = new FormData();
-    Object.entries(data).forEach(([key, value]) => {
-      if (Array.isArray(value)) {
-        value.forEach((item) => formData.append(key, item));
-      } else {
-        formData.append(key, value ?? "");
-      }
-    });
-
-    startTransition(() => {
-      void saveBriefingAction(formData).then((response) => {
-        return setResult(response);
-      });
-    });
-  };
+export default async function BriefingPage() {
+  const user = await ensureDevUser();
+  const briefing = await getLatestBriefingForUser(user.id);
+  const initialValues = buildInitialValues(briefing);
+  const isEditing = Boolean(briefing);
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="space-y-1">
-        <h1 className="text-3xl font-semibold">Briefing</h1>
+        <h1 className="text-3xl font-semibold">
+          {isEditing ? "Editar briefing" : "Briefing"}
+        </h1>
         <p className="text-sm text-muted-foreground">
-          Conte para a IA o que você precisa e receba um resumo estratégico.
+          {isEditing
+            ? "Ajuste seu direcionamento. Você pode salvar novamente quando quiser."
+            : "Conte para a IA o que você precisa e receba um resumo estratégico."}
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit(onSubmit)}
-        className="mx-auto w-full max-w-2xl md:max-w-3xl"
-      >
-        <Card className="rounded-3xl border bg-card/80 shadow-sm">
-          <CardHeader className="space-y-1 px-6 pb-2 pt-6">
-            <div>
-              <CardTitle>Briefing guiado</CardTitle>
-              <CardDescription>
-                Estruture o contexto e receba uma orientação clara para seus posts.
-              </CardDescription>
-            </div>
-          </CardHeader>
-
-          <CardContent className="space-y-6 px-6 pb-2">
-            <section className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="flex flex-col gap-2 min-w-0">
-                  <Label htmlFor="goal" className="min-h-[40px] leading-snug">
-                    Qual é o objetivo do post?
-                  </Label>
-                  <select
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs focus-visible:border-ring focus-visible:ring-ring/50"
-                    id="goal"
-                    {...register("goal")}
-                  >
-                    {goalOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="min-h-[16px] text-xs text-muted-foreground mt-2">
-                    Defina a intenção principal do post.
-                  </p>
-                  {errors.goal && (
-                    <p className="text-sm text-destructive-500">{errors.goal.message}</p>
-                  )}
-                </div>
-                <div className="flex flex-col gap-2 min-w-0">
-                  <Label htmlFor="audience" className="min-h-[40px] leading-snug">
-                    Para quem é?
-                  </Label>
-                  <select
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs focus-visible:border-ring focus-visible:ring-ring/50"
-                    id="audience"
-                    {...register("audience")}
-                  >
-                    {audienceOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="min-h-[16px] text-xs text-muted-foreground mt-2">
-                    Escolha o público que você quer atingir.
-                  </p>
-                  {errors.audience && (
-                    <p className="text-sm text-destructive-500">{errors.audience.message}</p>
-                  )}
-                </div>
-                <div className="flex flex-col gap-2 min-w-0">
-                  <Label htmlFor="audienceLevel" className="min-h-[40px] leading-snug">
-                    Nível do público
-                  </Label>
-                  <select
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs focus-visible:border-ring focus-visible:ring-ring/50"
-                    id="audienceLevel"
-                    {...register("audienceLevel")}
-                  >
-                    {audienceLevelOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="min-h-[16px] text-xs text-muted-foreground mt-2">
-                    Quanto o público já conhece sobre o assunto.
-                  </p>
-                  {errors.audienceLevel && (
-                    <p className="text-sm text-destructive-500">{errors.audienceLevel.message}</p>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <Separator />
-
-            <section className="space-y-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="offer">O que você oferece?</Label>
-                <Textarea
-                  id="offer"
-                  rows={3}
-                  placeholder="Ex: Mentoria 1:1 para iniciantes..."
-                  {...register("offer")}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Foque no benefício principal e no problema que resolve.
-                </p>
-                {errors.offer && (
-                  <p className="text-sm text-destructive-500">{errors.offer.message}</p>
-                )}
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="differentiation">Por que você é diferente?</Label>
-                <Textarea
-                  id="differentiation"
-                  rows={3}
-                  placeholder="Ex: Método prático + templates..."
-                  {...register("differentiation")}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Destaque processos, formatos ou entregáveis exclusivos.
-                </p>
-                {errors.differentiation && (
-                  <p className="text-sm text-destructive-500">
-                    {errors.differentiation.message}
-                  </p>
-                )}
-              </div>
-            </section>
-
-            <Separator />
-
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-base font-semibold">Tom de voz (escolha até 2)</p>
-                <p
-                  className={
-                    toneLimitReached
-                      ? "text-xs text-destructive-500"
-                      : "text-xs text-muted-foreground"
-                  }
-                >
-                  {toneCountText}
-                </p>
-              </div>
-              <ToggleGroup className="flex flex-wrap gap-2">
-                {toneOptions.map((tone) => {
-                  const selected = selectedTones.includes(tone);
-                  const disabled = toneLimitReached && !selected;
-                  return (
-                    <ToggleGroupItem
-                      key={tone}
-                      pressed={selected}
-                      disabled={disabled}
-                      onClick={() => toggleTone(tone)}
-                    >
-                      {tone}
-                    </ToggleGroupItem>
-                  );
-                })}
-              </ToggleGroup>
-              {errors.tone && (
-                <p className="text-sm text-destructive-500">{errors.tone.message}</p>
-              )}
-            </section>
-
-            <Separator />
-
-            <section className="space-y-3">
-              <p className="text-base font-semibold">Evitar no texto</p>
-              <p className="text-xs text-muted-foreground">Marque o que não deve aparecer.</p>
-              <ToggleGroup className="flex flex-wrap gap-2">
-                {avoidOptions.map((avoid) => {
-                  return (
-                    <ToggleGroupItem
-                      key={avoid}
-                      pressed={selectedAvoid.includes(avoid)}
-                      onClick={() => toggleAvoid(avoid)}
-                    >
-                      {avoid}
-                    </ToggleGroupItem>
-                  );
-                })}
-              </ToggleGroup>
-            </section>
-
-            <Separator />
-
-            <section className="space-y-2">
-              <Label htmlFor="cta">O que você quer que a pessoa faça?</Label>
-              <select
-                className="rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs focus-visible:border-ring focus-visible:ring-ring/50"
-                id="cta"
-                {...register("cta")}
-              >
-                {ctaOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
-            </section>
-          </CardContent>
-
-          <CardFooter className="flex flex-col gap-3 border-t pt-4 px-6">
-            <div className="flex flex-wrap items-center gap-3">
-              <Button type="submit" disabled={isPending}>
-                {isPending ? "Salvando..." : "Salvar e ver resumo"}
-              </Button>
-              <Button variant="ghost" asChild>
-                <Link href="/dashboard">Cancelar</Link>
-              </Button>
-              {isPending && (
-                <span className="text-xs text-muted-foreground">Salvando…</span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Após salvar, seu resumo aparecerá no dashboard.
-            </p>
-            {statusMessage()}
-          </CardFooter>
-        </Card>
-      </form>
+      <BriefingForm defaultValues={initialValues} />
     </main>
   );
 }
