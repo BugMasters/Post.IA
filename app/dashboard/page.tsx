@@ -95,7 +95,10 @@ export default async function DashboardPage() {
               <p className="text-muted-foreground">{briefing.cta}</p>
             </div>
           </CardContent>
-          <CardFooter className="flex flex-col gap-3 border-t pt-4">
+          <CardFooter className="flex flex-wrap items-center gap-3 border-t pt-4">
+            <Button asChild className="w-full sm:w-auto">
+              <Link href="/generate">Gerar posts</Link>
+            </Button>
             <Button variant="outline" asChild className="w-full sm:w-auto">
               <Link href="/briefing">Editar briefing</Link>
             </Button>
