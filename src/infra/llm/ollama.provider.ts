@@ -2,12 +2,23 @@ import { LlmProvider } from "./provider";
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
 const DEFAULT_MODEL = "qwen2.5:7b-instruct";
+const DEFAULT_KEEP_ALIVE = "10m";
 const BASE_URL = (process.env.OLLAMA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
 const MODEL = process.env.OLLAMA_MODEL ?? DEFAULT_MODEL;
 const OLLAMA_API_URL = `${BASE_URL}/api/generate`;
 
+const numEnv = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const strEnv = (name: string, fallback: string): string => process.env[name] ?? fallback;
+
 type OllamaResponse = {
   response?: string;
+  message?: { content?: string };
   error?: string;
 };
 
@@ -21,17 +32,29 @@ const buildConnectionError = (inner?: string) => {
 
 export class OllamaProvider implements LlmProvider {
   async generateText(prompt: string): Promise<string> {
-    let response: Response;
+    const options = {
+      num_predict: numEnv("OLLAMA_NUM_PREDICT", 850),
+      num_ctx: numEnv("OLLAMA_NUM_CTX", 2048),
+      temperature: numEnv("OLLAMA_TEMPERATURE", 0.6),
+      top_p: numEnv("OLLAMA_TOP_P", 0.9),
+      repeat_penalty: numEnv("OLLAMA_REPEAT_PENALTY", 1.12),
+    };
 
+    const body = {
+      model: MODEL,
+      prompt,
+      stream: false,
+      format: "json",
+      keep_alive: strEnv("OLLAMA_KEEP_ALIVE", DEFAULT_KEEP_ALIVE),
+      options,
+    };
+
+    let response: Response;
     try {
       response = await fetch(OLLAMA_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: MODEL,
-          prompt,
-          stream: false,
-        }),
+        body: JSON.stringify(body),
       });
     } catch (error) {
       const innerMessage = error instanceof Error ? error.message : undefined;
@@ -39,20 +62,24 @@ export class OllamaProvider implements LlmProvider {
     }
 
     if (!response.ok) {
+      const text = await response.text();
       const statusText = response.statusText ? ` (${response.statusText})` : "";
+      const resolvedText = text ? ` Resposta: ${text.trim()}` : "";
       throw new Error(
-        `Ollama respondeu com status ${response.status}${statusText}. Tente novamente.`
+        `Ollama respondeu com status ${response.status}${statusText}.${resolvedText}`
       );
     }
 
     const payload = (await response.json()) as OllamaResponse;
+    const result = payload.response ?? payload.message?.content;
 
-    if (!payload.response) {
+    if (!result || typeof result !== "string") {
       throw new Error(
-        payload.error ?? "O Ollama retornou uma resposta inesperada. Tente novamente."
+        payload.error ??
+          "O Ollama retornou uma resposta inesperada. Tente novamente."
       );
     }
 
-    return payload.response;
+    return result;
   }
 }

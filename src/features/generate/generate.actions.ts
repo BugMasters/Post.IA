@@ -4,6 +4,7 @@ import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import { getLlmProvider } from "@/infra/llm";
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
+import type { LlmProvider } from "@/infra/llm/provider";
 
 export type GeneratePostFormat = "TEXT" | "PHOTO_TEXT" | "PHOTO";
 
@@ -163,9 +164,13 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
   });
 };
 
-const parseVariantsFromRaw = (raw: string) => {
+const parseStrictVariants = (raw: string) => {
   const payload = extractPayload(raw);
   return buildVariantList(payload);
+};
+
+const gatherResponseText = async (provider: LlmProvider, prompt: string) => {
+  return provider.generateText(prompt);
 };
 
 const buildPrompt = (
@@ -181,46 +186,39 @@ const buildPrompt = (
   );
   const audience = safeField(briefing.audience, "público-alvo não informado");
   const audienceLevel = safeField(briefing.audienceLevel, "Intermediário");
-  const tone = briefing.tone?.length > 0 ? briefing.tone.join(" e ") : "tom natural e respeitoso";
+  const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
   const cta = safeField(briefing.cta, "CTA respeitosa");
-
-  const contextLines = [
-    `Objetivo do briefing: ${goal}`,
-    `Oferta chave: ${offer}`,
-    `Diferencial: ${differentiation}`,
-    `Público-alvo: ${audience} (${audienceLevel})`,
-    `Tom preferido: ${tone}`,
-    `CTA sugerida: ${cta}`,
-  ];
-
-  const avoids = Array.from(
-    new Set([
-      ...(Array.isArray(briefing.avoid) ? briefing.avoid : []),
-      ...BASE_AVOIDANCES,
-    ])
-  );
-
-  const avoidInstruction =
-    avoids.length > 0 ? `Evite ${avoids.join(", ").toLowerCase()}.` : "";
 
   const audienceGuidance =
     AUDIENCE_LEVEL_GUIDANCE[audienceLevel] ??
     "Equilibre clareza e autoridade conforme o contexto.";
 
+  const avoidList = Array.from(
+    new Set([
+      ...(Array.isArray(briefing.avoid) ? briefing.avoid : []),
+      ...BASE_AVOIDANCES,
+    ])
+  );
+  const avoidSummary = avoidList.length ? avoidList.join(", ") : "nenhum";
+
+  const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
+  const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
+
   return [
     "Você é um redator experiente focado em redes sociais B2B/B2C.",
-    "Use apenas os dados abaixo como contexto e não repita literalmente os nomes dos campos (como Objetivo, Audiência ou Oferta) no texto final.",
-    "NÃO inclua palavras como \"Objetivo:\" ou \"Audiência:\" dentro dos textos gerados.",
+    "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
     `Tema base: ${theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
-    `Adapte a linguagem ao nível ${audienceLevel}. ${audienceGuidance}.`,
-    avoidInstruction,
-    "O público também deve sentir o tom sugerido e o CTA dever ser respeitoso, sem pressionar.",
-    `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}.`,
-    "Mantenha a ordem das variações conforme o mesmo conjunto de labels.",
-    "RETORNE APENAS UM JSON VÁLIDO com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
-    "Os conteúdos devem ser prontos para publicação, em português, com no máximo 120 palavras cada e sem mencionar os campos do briefing no texto final.",
-    ...(contextLines.length ? ["Contexto do briefing:", ...contextLines] : []),
+    `Contexto: ${contextSummary}`,
+    toneInstruction,
+    `Evite: ${avoidSummary}.`,
+    `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
+    "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
+    "Cada post deve ser em português, pronto para publicação, com no máximo 900 caracteres, primeira linha gancho forte, seguida de 3 bullets (um por linha) e CTA final.",
+    `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
+    "Não invente dados, não use clichês como \"transforme sua vida\" ou \"ninguém te conta\", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.",
+    "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
+    "O gancho, bullets e CTA não podem usar clichês, textão ou figuras de autoridade exageradas.",
   ]
     .filter(Boolean)
     .join("\n");
@@ -253,8 +251,8 @@ export async function generatePostsAction(input: {
   const prompt = buildPrompt(trimmedTheme, input.format, briefing);
 
   const runPrompt = async (promptToSend: string) => {
-    const rawResponse = await provider.generateText(promptToSend);
-    return parseVariantsFromRaw(rawResponse);
+    const rawResponse = await gatherResponseText(provider, promptToSend);
+    return parseStrictVariants(rawResponse);
   };
 
   try {
