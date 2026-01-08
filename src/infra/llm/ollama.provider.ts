@@ -33,9 +33,9 @@ const buildConnectionError = (inner?: string) => {
 export class OllamaProvider implements LlmProvider {
   async generateText(prompt: string): Promise<string> {
     const options = {
-      num_predict: numEnv("OLLAMA_NUM_PREDICT", 900),
-      num_ctx: numEnv("OLLAMA_NUM_CTX", 2048),
-      temperature: numEnv("OLLAMA_TEMPERATURE", 0.6),
+      num_predict: numEnv("OLLAMA_NUM_PREDICT", 1600),
+      num_ctx: numEnv("OLLAMA_NUM_CTX", 4096),
+      temperature: numEnv("OLLAMA_TEMPERATURE", 0.65),
       top_p: numEnv("OLLAMA_TOP_P", 0.9),
       repeat_penalty: numEnv("OLLAMA_REPEAT_PENALTY", 1.15),
     };

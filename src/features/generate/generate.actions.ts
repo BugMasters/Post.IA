@@ -20,9 +20,9 @@ const EXPECTED_VARIANT_LABELS = [
 ] as const;
 
 const FORMAT_DESCRIPTIONS: Record<GeneratePostFormat, string> = {
-  TEXT: "texto enxuto pronto para publicação em feed ou thread",
-  PHOTO_TEXT: "legenda que acompanha imagem marcante com contexto claro",
-  PHOTO: "foco na imagem, frase curta e impacto visual",
+  TEXT: "post completo em formato LinkedIn, com começo-meio-fim",
+  PHOTO_TEXT: "legenda completa para LinkedIn, alinhada a imagem com contexto claro",
+  PHOTO: "legenda para Instagram, coesa e com ritmo mais direto",
 };
 
 const AUDIENCE_LEVEL_GUIDANCE: Record<string, string> = {
@@ -39,6 +39,16 @@ const BASE_AVOIDANCES = [
   "Polêmica",
   "Coach vibes",
   "CTA agressivo",
+];
+
+const BANNED_CLICHES = [
+  "transforme sua vida",
+  "ninguém te conta",
+  "no mercado acelerado",
+  "sucesso garantido",
+  "melhor resultado",
+  "solução completa",
+  "em tempo recorde",
 ];
 
 const DEFAULT_SERVER_ERROR_MESSAGE = "Não foi possível gerar variações no momento.";
@@ -202,6 +212,89 @@ const parseStrictVariants = (raw: string) => {
   }
 };
 
+const resolveCharRange = (format: GeneratePostFormat) => {
+  if (format === "PHOTO") {
+    return { min: 600, max: 1200 };
+  }
+  return { min: 900, max: 1600 };
+};
+
+const normalizeCta = (cta: string) =>
+  cta
+    .trim()
+    .replace(/[.!?…]+$/g, "")
+    .toLowerCase();
+
+const looksLikeCta = (line: string) =>
+  /(comente|comenta|me chama|chame|fale comigo|clique|saiba mais|baixe|inscreva|envie|acesse|agende|marque|link|dm|mensagem)/i.test(
+    line
+  );
+
+const hasApplicableSnippet = (content: string) =>
+  /(passo|checklist|exemplo|roteiro|3 passos|1\)|2\)|3\)|^\s*[-•]\s+)/im.test(
+    content
+  );
+
+const hasBannedCliche = (content: string) => {
+  const lower = content.toLowerCase();
+  return BANNED_CLICHES.some((cliche) => lower.includes(cliche));
+};
+
+const isWeak = (
+  content: string,
+  cta: string,
+  format: GeneratePostFormat
+) => {
+  const lines = content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const paragraphCount = lines.length;
+
+  if (paragraphCount < 3) {
+    return true;
+  }
+
+  const totalLength = lines.reduce((sum, line) => sum + line.length, 0);
+  const shortLines = lines.filter((line) => line.length < 50).length;
+  const avgLength = totalLength / lines.length;
+  const choppy = lines.length >= 6 && shortLines / lines.length > 0.6 && avgLength < 80;
+
+  if (choppy) {
+    return true;
+  }
+
+  if (!hasApplicableSnippet(content)) {
+    return true;
+  }
+
+  const { min, max } = resolveCharRange(format);
+  if (content.length < min || content.length > max) {
+    return true;
+  }
+
+  if (hasBannedCliche(content)) {
+    return true;
+  }
+
+  const lastLine = lines.at(-1) ?? "";
+  const normalizedCta = normalizeCta(cta);
+  const normalizedLastLine = normalizeCta(lastLine);
+
+  if (normalizedCta === "sem cta") {
+    if (looksLikeCta(lastLine)) {
+      return true;
+    }
+    return false;
+  }
+
+  if (!normalizedLastLine || normalizedLastLine !== normalizedCta) {
+    return true;
+  }
+
+  return false;
+};
+
 const gatherResponseText = async (provider: LlmProvider, prompt: string) => {
   return provider.generateText(prompt);
 };
@@ -312,6 +405,11 @@ const buildRepairPrompt = (prompt: string, raw: string) => {
     .join("\n");
 };
 
+const buildSubsetTemplate = (labels: string[]) => {
+  const items = labels.map((label) => `{"label":"${label}","content":"..."}`).join(",\n    ");
+  return `{\n  "variants": [\n    ${items}\n  ]\n}`;
+};
+
 const buildPrompt = (
   theme: string,
   format: GeneratePostFormat,
@@ -342,9 +440,12 @@ const buildPrompt = (
 
   const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
   const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
+  const { min, max } = resolveCharRange(format);
 
   return [
-    "Você é um redator experiente focado em redes sociais B2B/B2C.",
+    "Você é um redator experiente focado em posts coesos para LinkedIn e Instagram.",
+    "O TEMA É SOBERANO. Não introduza tecnologias/assuntos que não apareçam no tema.",
+    "O briefing só serve para adaptar tom, exemplos e CTA.",
     "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
     `Tema base: ${theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
@@ -354,17 +455,150 @@ const buildPrompt = (
     `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
     "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
     "Preencha todos os 6. Não deixe nenhum faltando.",
-    "Cada conteúdo deve ter entre 300 e 600 caracteres.",
-    "Estrutura obrigatória: Linha 1 gancho, Linhas 2-4 com 3 bullets curtos (um por linha), última linha CTA.",
+    `Cada conteúdo deve ter entre ${min} e ${max} caracteres.`,
+    "Estrutura obrigatória (sem bullets obrigatórios):",
+    "- Abertura: gancho específico (1–2 frases).",
+    "- Desenvolvimento: 2–4 parágrafos curtos com lógica contínua.",
+    "- Utilidade: inclua 1 trecho aplicável (framework 3 passos, checklist curto, exemplo ou roteiro).",
+    "- Fechamento: CTA na última linha.",
+    "Não escreva uma lista de frases soltas; os parágrafos devem se conectar.",
     `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
+    'Se o CTA sugerido for "Sem CTA", finalize com uma frase de fechamento sem chamada à ação.',
+    "Cada variação deve conter EXATAMENTE 1 recurso criativo dentre:",
+    "- metáfora/analogia curta original",
+    "- mini-história (3–4 linhas) em primeira pessoa OU cenário realista",
+    '- contraponto/virada ("o erro comum é..., o caminho melhor é...")',
     "Template de saída:",
     VARIANT_TEMPLATE,
-    "Não invente dados, não use clichês como \"transforme sua vida\" ou \"ninguém te conta\", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.",
+    `Não use clichês e genéricos: ${BANNED_CLICHES.join(", ")}.`,
+    "Evite superlativos sem prova e qualquer dado não fornecido.",
     "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
-    "O gancho, bullets e CTA não podem usar clichês, textão ou figuras de autoridade exageradas.",
   ]
     .filter(Boolean)
     .join("\n");
+};
+
+const buildRewritePrompt = ({
+  theme,
+  format,
+  briefing,
+  variants,
+}: {
+  theme: string;
+  format: GeneratePostFormat;
+  briefing: BriefingRecord;
+  variants: GenerateVariant[];
+}) => {
+  const goal = safeField(briefing.goal, "objetivo principal do briefing");
+  const offer = safeField(briefing.offer, "oferta principal");
+  const differentiation = safeField(
+    briefing.differentiation,
+    "diferencial principal"
+  );
+  const audience = safeField(briefing.audience, "público-alvo não informado");
+  const audienceLevel = safeField(briefing.audienceLevel, "Intermediário");
+  const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
+  const cta = safeField(briefing.cta, "CTA respeitosa");
+  const audienceGuidance =
+    AUDIENCE_LEVEL_GUIDANCE[audienceLevel] ??
+    "Equilibre clareza e autoridade conforme o contexto.";
+  const avoidList = Array.from(
+    new Set([
+      ...(Array.isArray(briefing.avoid) ? briefing.avoid : []),
+      ...BASE_AVOIDANCES,
+    ])
+  );
+  const avoidSummary = avoidList.length ? avoidList.join(", ") : "nenhum";
+  const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
+  const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
+  const { min, max } = resolveCharRange(format);
+
+  const variantBlock = variants
+    .map((variant) => `Label: ${variant.label}\nConteúdo atual:\n${variant.content}`)
+    .join("\n\n");
+
+  const template = buildSubsetTemplate(variants.map((variant) => variant.label));
+
+  return [
+    "Reescreva SOMENTE as variantes fracas abaixo.",
+    "O TEMA É SOBERANO. Não introduza tecnologias/assuntos que não apareçam no tema.",
+    "O briefing só serve para adaptar tom, exemplos e CTA.",
+    `Tema base: ${theme}`,
+    `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
+    `Contexto: ${contextSummary}`,
+    toneInstruction,
+    `Evite: ${avoidSummary}.`,
+    `Cada conteúdo deve ter entre ${min} e ${max} caracteres.`,
+    "Estrutura obrigatória (sem bullets obrigatórios):",
+    "- Abertura: gancho específico (1–2 frases).",
+    "- Desenvolvimento: 2–4 parágrafos curtos com lógica contínua.",
+    "- Utilidade: inclua 1 trecho aplicável (framework 3 passos, checklist curto, exemplo ou roteiro).",
+    "- Fechamento: CTA na última linha.",
+    "Não escreva uma lista de frases soltas; os parágrafos devem se conectar.",
+    `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
+    'Se o CTA sugerido for "Sem CTA", finalize com uma frase de fechamento sem chamada à ação.',
+    "Cada variação deve conter EXATAMENTE 1 recurso criativo dentre:",
+    "- metáfora/analogia curta original",
+    "- mini-história (3–4 linhas) em primeira pessoa OU cenário realista",
+    '- contraponto/virada ("o erro comum é..., o caminho melhor é...")',
+    `Não use clichês e genéricos: ${BANNED_CLICHES.join(", ")}.`,
+    "Evite superlativos sem prova e qualquer dado não fornecido.",
+    "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
+    "Mantenha SOMENTE as labels enviadas, na mesma ordem.",
+    "Variantes para reescrever:",
+    variantBlock,
+    "Template de saída obrigatório:",
+    template,
+  ]
+    .filter(Boolean)
+    .join("\n");
+};
+
+const parseSubsetVariants = (raw: string, expectedLabels: string[]) => {
+  try {
+    const payload = parseJsonWithRecovery(raw);
+    const variants = extractVariants(payload);
+    if (!Array.isArray(variants)) {
+      throw new VariantParseError("Formato inválido: variants ausente ou malformado.");
+    }
+    if (variants.length !== expectedLabels.length) {
+      throw new VariantParseError("Formato inválido: quantidade de variantes inesperada.");
+    }
+
+    const parsed: GenerateVariant[] = [];
+
+    variants.forEach((item, index) => {
+      if (!isRecord(item)) {
+        throw new VariantParseError(
+          `Formato inválido: variante ${index + 1} não é um objeto.`
+        );
+      }
+
+      const rawLabel = typeof item.label === "string" ? item.label.trim() : "";
+      const rawContent = typeof item.content === "string" ? item.content.trim() : "";
+      const expectedLabel = expectedLabels[index];
+
+      if (!rawLabel || rawLabel !== expectedLabel) {
+        throw new VariantParseError(
+          `Ordem de labels inválida: esperado "${expectedLabel}" na posição ${index + 1}.`
+        );
+      }
+      if (!rawContent) {
+        throw new VariantParseError(
+          `Formato inválido: o conteúdo da variação "${rawLabel}" não pode estar vazio.`
+        );
+      }
+
+      parsed.push({ label: rawLabel, content: rawContent });
+    });
+
+    return parsed;
+  } catch (error) {
+    if (error instanceof VariantParseError && !error.raw) {
+      error.raw = raw;
+    }
+    throw error;
+  }
 };
 
 async function runPromptWithRepair(
@@ -413,9 +647,40 @@ export async function generatePostsAction(input: {
 
   const provider = getLlmProvider();
   const prompt = buildPrompt(trimmedTheme, input.format, briefing);
+  const cta = safeField(briefing.cta, "CTA respeitosa");
 
   try {
     const variants = await runPromptWithRepair(provider, prompt);
+    const weakIndexes = variants
+      .map((variant, index) =>
+        isWeak(variant.content, cta, input.format) ? index : -1
+      )
+      .filter((index) => index >= 0);
+
+    if (weakIndexes.length >= 2 && process.env.LLM_REWRITE_WEAK === "1") {
+      const weakVariants = weakIndexes.map((index) => variants[index]);
+      const rewritePrompt = buildRewritePrompt({
+        theme: trimmedTheme,
+        format: input.format,
+        briefing,
+        variants: weakVariants,
+      });
+
+      try {
+        const rawRewrite = await gatherResponseText(provider, rewritePrompt);
+        const rewritten = parseSubsetVariants(
+          rawRewrite,
+          weakVariants.map((variant) => variant.label)
+        );
+        const rewrittenMap = new Map(rewritten.map((variant) => [variant.label, variant]));
+        const merged = variants.map((variant) => rewrittenMap.get(variant.label) ?? variant);
+        return { ok: true, variants: merged };
+      } catch (error) {
+        const raw = error instanceof VariantParseError ? error.raw : undefined;
+        logGenerateError("rewrite", error, raw);
+        return { ok: true, variants };
+      }
+    }
     return { ok: true, variants };
   } catch (error) {
     if (error instanceof VariantParseError) {
