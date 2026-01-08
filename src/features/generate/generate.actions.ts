@@ -59,7 +59,20 @@ const cleanupResponseText = (raw: string) =>
     .trim()
     .replace(/^\u200B+|\u200B+$/g, "");
 
-class VariantParseError extends Error {}
+class VariantParseError extends Error {
+  raw?: string;
+
+  constructor(message: string, raw?: string) {
+    super(message);
+    this.name = "VariantParseError";
+    this.raw = raw;
+  }
+}
+
+const LOG_SNIPPET_LENGTH = 400;
+const UI_SNIPPET_LENGTH = 180;
+
+const isDev = process.env.NODE_ENV !== "production";
 
 const tryParseJson = (value: string) => {
   try {
@@ -69,11 +82,19 @@ const tryParseJson = (value: string) => {
   }
 };
 
-const extractPayload = (raw: string) => {
+const buildSnippet = (raw: string, limit: number) => {
+  const normalized = raw.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit)}...`;
+};
+
+const parseJsonWithRecovery = (raw: string) => {
   const cleaned = cleanupResponseText(raw);
 
   if (!cleaned) {
-    throw new VariantParseError("Resposta vazia da IA.");
+    throw new VariantParseError("Resposta vazia da IA.", raw);
   }
 
   const direct = tryParseJson(cleaned);
@@ -81,18 +102,20 @@ const extractPayload = (raw: string) => {
     return direct;
   }
 
-  const firstObjectMatch = cleaned.match(/(\{[\s\S]*\})/);
-  if (firstObjectMatch) {
-    const fromBlock = tryParseJson(firstObjectMatch[1]);
-    if (fromBlock) {
-      return fromBlock;
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    const sliced = cleaned.slice(start, end + 1);
+    const recovered = tryParseJson(sliced);
+    if (recovered) {
+      return recovered;
     }
   }
 
-  throw new VariantParseError("Não foi possível interpretar o JSON retornado.");
+  throw new VariantParseError("Não foi possível interpretar o JSON retornado.", raw);
 };
 
-const buildVariantList = (payload: unknown): GenerateVariant[] => {
+const extractVariants = (payload: unknown) => {
   if (!isRecord(payload)) {
     throw new VariantParseError("Formato inválido: payload não é um objeto.");
   }
@@ -102,15 +125,19 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
     throw new VariantParseError("Formato inválido: variants ausente ou malformado.");
   }
 
-  if (rawVariants.length !== EXPECTED_VARIANT_LABELS.length) {
-    throw new VariantParseError(
-      "A resposta deve conter exatamente 6 variações dentro de variants."
-    );
+  return rawVariants;
+};
+
+const validateVariantsStrict = (variants: unknown): GenerateVariant[] => {
+  if (!Array.isArray(variants)) {
+    throw new VariantParseError("Formato inválido: variants ausente ou malformado.");
   }
 
-  const normalizedMap = new Map<string, { label: string; content: string }>();
+  const total = variants.length;
+  const parsed: GenerateVariant[] = [];
+  const foundLabels = new Set<string>();
 
-  rawVariants.forEach((item, index) => {
+  variants.forEach((item, index) => {
     if (!isRecord(item)) {
       throw new VariantParseError(`Formato inválido: variante ${index + 1} não é um objeto.`);
     }
@@ -129,48 +156,160 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
       );
     }
 
-    const key = normalizeLabel(rawLabel);
-    if (!key) {
-      throw new VariantParseError(
-        `Formato inválido: o label "${rawLabel}" não pôde ser normalizado.`
-      );
+    if (EXPECTED_VARIANT_LABELS.includes(rawLabel as (typeof EXPECTED_VARIANT_LABELS)[number])) {
+      foundLabels.add(rawLabel);
     }
 
-    if (normalizedMap.has(key)) {
-      throw new VariantParseError(`Duplicata detectada para o label "${rawLabel}".`);
-    }
-
-    normalizedMap.set(key, { label: rawLabel, content: rawContent });
+    parsed.push({ label: rawLabel, content: rawContent });
   });
 
-  const missing = EXPECTED_VARIANT_LABELS.filter(
-    (label) => !normalizedMap.has(label.toLowerCase())
-  );
-
+  const missing = EXPECTED_VARIANT_LABELS.filter((label) => !foundLabels.has(label));
   if (missing.length) {
-    throw new VariantParseError(`Faltam variações: ${missing.join(", ")}.`);
+    throw new VariantParseError(
+      `Resposta incompleta: faltando labels: ${missing.join(", ")} (recebido ${Math.min(
+        total,
+        EXPECTED_VARIANT_LABELS.length
+      )}/6).`
+    );
   }
 
-  return EXPECTED_VARIANT_LABELS.map((label) => {
-    const entry = normalizedMap.get(label.toLowerCase());
-    if (!entry) {
-      throw new VariantParseError(`Faltam variações: ${label}.`);
-    }
+  if (total !== EXPECTED_VARIANT_LABELS.length) {
+    throw new VariantParseError("Formato inválido: quantidade de variantes deve ser 6.");
+  }
 
-    return {
-      label,
-      content: entry.content,
-    };
+  EXPECTED_VARIANT_LABELS.forEach((expected, index) => {
+    const entry = parsed[index];
+    if (!entry || entry.label !== expected) {
+      throw new VariantParseError(
+        `Ordem de labels inválida: esperado "${expected}" na posição ${index + 1}.`
+      );
+    }
   });
+
+  return parsed;
 };
 
 const parseStrictVariants = (raw: string) => {
-  const payload = extractPayload(raw);
-  return buildVariantList(payload);
+  try {
+    const payload = parseJsonWithRecovery(raw);
+    const variants = extractVariants(payload);
+    return validateVariantsStrict(variants);
+  } catch (error) {
+    if (error instanceof VariantParseError && !error.raw) {
+      error.raw = raw;
+    }
+    throw error;
+  }
 };
 
 const gatherResponseText = async (provider: LlmProvider, prompt: string) => {
   return provider.generateText(prompt);
+};
+
+const resolveErrorType = (error: unknown): "parse" | "timeout" | "http" => {
+  if (error instanceof VariantParseError) {
+    return "parse";
+  }
+  if (error instanceof Error) {
+    if (
+      error.name === "TimeoutError" ||
+      error.name === "AbortError" ||
+      /tempo limite|timeout/i.test(error.message)
+    ) {
+      return "timeout";
+    }
+    if (
+      error.message.includes("Ollama respondeu com status") ||
+      error.message.includes("Não foi possível conectar ao Ollama")
+    ) {
+      return "http";
+    }
+  }
+  return "http";
+};
+
+const buildErrorMessage = (base: string, raw?: string, detail?: string) => {
+  if (!isDev || !raw) {
+    return base;
+  }
+  const safeDetail = detail ? detail.trim() : "";
+  const snippet = buildSnippet(raw, UI_SNIPPET_LENGTH);
+  if (!snippet && !safeDetail) {
+    return base;
+  }
+  if (safeDetail && snippet) {
+    return `${base} (${safeDetail}. detalhes: ${snippet})`;
+  }
+  if (safeDetail) {
+    return `${base} (${safeDetail})`;
+  }
+  return `${base} (detalhes: ${snippet})`;
+};
+
+const logGenerateError = (errorType: string, error: unknown, raw?: string) => {
+  if (isDev && raw) {
+    const snippet = buildSnippet(raw, LOG_SNIPPET_LENGTH);
+    console.error(`[generatePostsAction] erro ${errorType}:`, snippet);
+    return;
+  }
+  console.error(`[generatePostsAction] erro ${errorType}:`, error);
+};
+
+const VARIANT_TEMPLATE = `{
+  "variants": [
+    {"label":"Direto","content":"..."},
+    {"label":"Storytelling","content":"..."},
+    {"label":"Engraçado","content":"..."},
+    {"label":"Autoridade","content":"..."},
+    {"label":"Técnico","content":"..."},
+    {"label":"Empático","content":"..."}
+  ]
+}`;
+
+const extractPromptLine = (prompt: string, prefix: string) => {
+  const line = prompt.split("\n").find((entry) => entry.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : "";
+};
+
+const buildPromptSummary = (prompt: string) => {
+  const theme = extractPromptLine(prompt, "Tema base:");
+  const format = extractPromptLine(prompt, "Formato solicitado:");
+  const context = extractPromptLine(prompt, "Contexto:");
+  const avoid = extractPromptLine(prompt, "Evite:");
+  const cta = extractPromptLine(
+    prompt,
+    "A última linha deve repetir exatamente o CTA sugerido:"
+  );
+
+  return [
+    `Tema: ${theme || "não informado"}`,
+    `Formato: ${format || "não informado"}`,
+    `Contexto: ${context || "não informado"}`,
+    `Evitar: ${avoid || "não informado"}`,
+    `CTA: ${cta || "não informado"}`,
+  ].join("\n");
+};
+
+const buildRepairPrompt = (prompt: string, raw: string) => {
+  const rawSnippet = buildSnippet(raw, 1200);
+  const summary = buildPromptSummary(prompt);
+
+  return [
+    "Você devolveu uma resposta incompleta/inválida.",
+    "Retorne APENAS JSON válido contendo EXATAMENTE 6 variantes, com as labels na ordem fixa.",
+    "Reescreva TODAS as 6 variantes do zero e garanta JSON bem formado.",
+    "",
+    "Resumo do prompt original:",
+    summary,
+    "",
+    "Resposta recebida (trecho):",
+    rawSnippet,
+    "",
+    "Template de saída obrigatório:",
+    VARIANT_TEMPLATE,
+  ]
+    .filter(Boolean)
+    .join("\n");
 };
 
 const buildPrompt = (
@@ -214,8 +353,12 @@ const buildPrompt = (
     `Evite: ${avoidSummary}.`,
     `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
     "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
-    "Cada post deve ser em português, pronto para publicação, com no máximo 900 caracteres, primeira linha gancho forte, seguida de 3 bullets (um por linha) e CTA final.",
+    "Preencha todos os 6. Não deixe nenhum faltando.",
+    "Cada conteúdo deve ter entre 300 e 600 caracteres.",
+    "Estrutura obrigatória: Linha 1 gancho, Linhas 2-4 com 3 bullets curtos (um por linha), última linha CTA.",
     `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
+    "Template de saída:",
+    VARIANT_TEMPLATE,
     "Não invente dados, não use clichês como \"transforme sua vida\" ou \"ninguém te conta\", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.",
     "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
     "O gancho, bullets e CTA não podem usar clichês, textão ou figuras de autoridade exageradas.",
@@ -223,6 +366,27 @@ const buildPrompt = (
     .filter(Boolean)
     .join("\n");
 };
+
+async function runPromptWithRepair(
+  provider: LlmProvider,
+  prompt: string
+): Promise<GenerateVariant[]> {
+  const runOnce = async (promptToSend: string) => {
+    const rawResponse = await gatherResponseText(provider, promptToSend);
+    return parseStrictVariants(rawResponse);
+  };
+
+  try {
+    return await runOnce(prompt);
+  } catch (error) {
+    if (error instanceof VariantParseError) {
+      const raw = error.raw ?? "";
+      const repairPrompt = buildRepairPrompt(prompt, raw);
+      return runOnce(repairPrompt);
+    }
+    throw error;
+  }
+}
 
 export async function generatePostsAction(input: {
   theme: string;
@@ -250,36 +414,21 @@ export async function generatePostsAction(input: {
   const provider = getLlmProvider();
   const prompt = buildPrompt(trimmedTheme, input.format, briefing);
 
-  const runPrompt = async (promptToSend: string) => {
-    const rawResponse = await gatherResponseText(provider, promptToSend);
-    return parseStrictVariants(rawResponse);
-  };
-
   try {
-    const variants = await runPrompt(prompt);
+    const variants = await runPromptWithRepair(provider, prompt);
     return { ok: true, variants };
   } catch (error) {
     if (error instanceof VariantParseError) {
-      const retryPrompt = `${prompt}\n\nRETORNE APENAS JSON.`;
-      try {
-        const variants = await runPrompt(retryPrompt);
-        return { ok: true, variants };
-      } catch (retryError) {
-        if (retryError instanceof VariantParseError) {
-          return { ok: false, error: PARSE_RETRY_ERROR_MESSAGE };
-        }
-        const message =
-          retryError instanceof Error ? retryError.message : DEFAULT_SERVER_ERROR_MESSAGE;
-        console.error(
-          "[generatePostsAction] erro ao gerar variações no retry:",
-          retryError
-        );
-        return { ok: false, error: message || DEFAULT_SERVER_ERROR_MESSAGE };
-      }
+      const raw = error.raw;
+      logGenerateError("parse", error, raw);
+      return {
+        ok: false,
+        error: buildErrorMessage(PARSE_RETRY_ERROR_MESSAGE, raw, error.message),
+      };
     }
 
     const message = error instanceof Error ? error.message : DEFAULT_SERVER_ERROR_MESSAGE;
-    console.error("[generatePostsAction] erro ao gerar variações:", error);
+    logGenerateError(resolveErrorType(error), error);
     return { ok: false, error: message || DEFAULT_SERVER_ERROR_MESSAGE };
   }
 }

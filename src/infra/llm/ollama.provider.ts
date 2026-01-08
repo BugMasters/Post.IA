@@ -33,11 +33,11 @@ const buildConnectionError = (inner?: string) => {
 export class OllamaProvider implements LlmProvider {
   async generateText(prompt: string): Promise<string> {
     const options = {
-      num_predict: numEnv("OLLAMA_NUM_PREDICT", 850),
+      num_predict: numEnv("OLLAMA_NUM_PREDICT", 900),
       num_ctx: numEnv("OLLAMA_NUM_CTX", 2048),
       temperature: numEnv("OLLAMA_TEMPERATURE", 0.6),
       top_p: numEnv("OLLAMA_TOP_P", 0.9),
-      repeat_penalty: numEnv("OLLAMA_REPEAT_PENALTY", 1.12),
+      repeat_penalty: numEnv("OLLAMA_REPEAT_PENALTY", 1.15),
     };
 
     const body = {
@@ -49,16 +49,28 @@ export class OllamaProvider implements LlmProvider {
       options,
     };
 
+    const timeoutMs = numEnv("OLLAMA_TIMEOUT_MS", 25000);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     let response: Response;
     try {
       response = await fetch(OLLAMA_API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
     } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        const timeoutError = new Error("Tempo limite ao aguardar resposta do Ollama.");
+        timeoutError.name = "TimeoutError";
+        throw timeoutError;
+      }
       const innerMessage = error instanceof Error ? error.message : undefined;
       throw new Error(buildConnectionError(innerMessage));
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     if (!response.ok) {
