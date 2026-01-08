@@ -11,7 +11,7 @@ import { ClipboardList } from "lucide-react";
 
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
-import GenerateForm from "@/components/generate/generate-form";
+import GenerateForm from "@/features/generate/components/generate-form";
 
 const safeArray = (value: unknown) =>
   Array.isArray(value)

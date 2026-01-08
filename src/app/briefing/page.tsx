@@ -1,4 +1,4 @@
-import BriefingForm from "@/components/briefing/briefing-form";
+import BriefingForm from "@/features/briefing/components/briefing-form";
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import {
