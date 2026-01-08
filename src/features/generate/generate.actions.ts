@@ -568,11 +568,10 @@ export async function generatePostsAction(input: {
   try {
     const variants = await runPromptWithRepair(provider, prompt);
     const weakIndexes = variants
-      .map((variant, index) =>
-        getQualityIssues(variant.content, trimmedTheme, platform).issues.length
-          ? index
-          : -1
-      )
+      .map((variant, index) => {
+        const evaluation = getQualityIssues(variant.content, trimmedTheme, platform);
+        return evaluation.score < 4 ? index : -1;
+      })
       .filter((index) => index >= 0);
 
     if (weakIndexes.length > 0 && process.env.LLM_REWRITE_WEAK === "1") {
