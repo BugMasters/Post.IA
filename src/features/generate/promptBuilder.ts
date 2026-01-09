@@ -23,6 +23,9 @@ const clichesToAvoid = [
   "no mercado acelerado",
   "sucesso garantido",
   "em tempo recorde",
+  "no mundo de hoje",
+  "é essencial",
+  "dicas importantes",
 ];
 
 const safeLine = (label: string, value?: string) =>
@@ -87,60 +90,83 @@ const buildDirectiveBlock = (directives: WritingDirectives, platform: Platform) 
 export function buildGeneratePrompt({
   profile,
   platform,
+  platformContext,
   briefing,
   theme,
   format,
   directives,
+  labels,
+  template,
+  focusLabel,
+  styleLabel,
 }: {
   profile?: ProfileRecord | null;
   platform: Platform;
+  platformContext?: string;
   briefing: BriefingInput;
   theme: string;
   format: GeneratePostFormat;
   directives: WritingDirectives;
+  labels?: string[];
+  template?: string;
+  focusLabel?: string;
+  styleLabel?: string;
 }): string {
   const platformGuide = PLATFORM_GUIDE[platform];
+  const platformLabel = platformContext ?? platform;
   const directiveBlock = buildDirectiveBlock(directives, platform);
+  const resolvedLabels = labels ?? EXPECTED_VARIANT_LABELS;
+  const resolvedTemplate = template ?? VARIANT_TEMPLATE;
+  const styleLine = styleLabel ? `Estilo solicitado: ${styleLabel}` : "";
 
   return [
     "[ROLE]",
     "Você é um redator especialista em criar posts longos, coesos e específicos para redes sociais.",
     "",
     "[OUTPUT CONTRACT]",
-    "Retorne APENAS JSON válido e estrito.",
-    "Use exatamente o template e a ordem das labels.",
-    VARIANT_TEMPLATE,
+    "Responda APENAS com JSON válido e estrito. NÃO inclua texto fora do JSON.",
+    "NÃO use markdown.",
+    "NÃO coloque quebras de linha dentro de strings.",
+    "content_lines deve ser um array JSON com strings separadas por vírgula.",
+    "Cada item do array deve estar entre aspas e separado por vírgula.",
+    "Exemplo correto (minificado): {\"variants\":[{\"label\":\"Direto\",\"content_lines\":[\"Linha 1\",\"Linha 2\",\"Linha 3\"]}]}",
+    "Use exatamente o template e a ordem das labels fixas.",
+    "Use content_lines como array de strings. Cada linha deve ser uma string simples, sem \\n dentro.",
+    resolvedTemplate,
     "",
-    "[1 USER MEMORY]",
+    "[1 AUTOR (MEMÓRIA FIXA)]",
     summarizeProfile(profile),
     "",
-    "[2 PLATFORM]",
-    `Plataforma: ${platform}`,
+    "[2 PLATAFORMA]",
+    `Plataforma: ${platformLabel}`,
     `Target length: ${platformGuide.targetLength}`,
     `Style guide: ${platformGuide.styleGuide}`,
     `CTA guide: ${platformGuide.ctaGuide}`,
     `Formatting: ${platformGuide.formatting}`,
     "",
-    "[3 POST CONTEXT]",
+    "[3 TEMA]",
     `Tema base: ${theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
+    styleLine,
     `Resumo do briefing: ${summarizeBriefing(briefing)}`,
     "",
-    "[4 WRITING DIRECTIVES]",
+    "[4 DIRETRIZES]",
     directiveBlock || "Sem diretrizes adicionais além do briefing.",
     "",
     "[QUALITY RULES]",
     "O tema é soberano; mantenha foco total nele.",
     "Sem texto genérico. Cada variação deve mudar o ângulo, mas manter o mesmo contexto.",
     "Exija começo/meio/fim. Parágrafos devem se conectar.",
-    "Evite respostas curtas ou com apenas 5 linhas.",
+    "Evite respostas curtas ou truncadas.",
     "Inclua 1 exemplo concreto e 1 insight aplicável por variação.",
     "Não invente dados, números, cases, clientes ou resultados.",
     `Não use clichês ou frases vazias como: ${clichesToAvoid.join(", ")}.`,
-    "LinkedIn: 900-1800 caracteres, 3-6 parágrafos, CTA profissional.",
-    "Instagram: 500-1200 caracteres, 2-5 parágrafos, emojis leves (máx. 3), CTA de engajamento.",
+    "LinkedIn: 10-18 linhas, hook forte nas 2 primeiras linhas, corpo com 2-4 parágrafos curtos, CTA final.",
+    "Instagram: 8-14 linhas, frases diretas, ritmo rápido, CTA para comentar/salvar.",
+    "CTA obrigatório em todas as variações.",
     "",
-    `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
+    `Labels exigidos: ${resolvedLabels.join(", ")}. Mantenha essa ordem.`,
+    focusLabel ? `Gere somente a variação com label "${focusLabel}".` : "",
   ]
     .filter(Boolean)
     .join("\n");

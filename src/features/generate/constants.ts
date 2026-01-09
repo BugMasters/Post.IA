@@ -11,12 +11,12 @@ export const EXPECTED_VARIANT_LABELS = [
 
 export const VARIANT_TEMPLATE = `{
   "variants": [
-    {"label":"Direto","content":"..."},
-    {"label":"Storytelling","content":"..."},
-    {"label":"Engraçado","content":"..."},
-    {"label":"Autoridade","content":"..."},
-    {"label":"Técnico","content":"..."},
-    {"label":"Empático","content":"..."}
+    {"label":"Direto","content_lines":["..."]},
+    {"label":"Storytelling","content_lines":["..."]},
+    {"label":"Engraçado","content_lines":["..."]},
+    {"label":"Autoridade","content_lines":["..."]},
+    {"label":"Técnico","content_lines":["..."]},
+    {"label":"Empático","content_lines":["..."]}
   ]
 }`;
 
