@@ -12,6 +12,7 @@ import { ClipboardList } from "lucide-react";
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import GenerateForm from "@/features/generate/components/generate-form";
+import { toDbUserMessage } from "@/lib/db/dbError";
 
 const safeArray = (value: unknown) =>
   Array.isArray(value)
@@ -19,8 +20,15 @@ const safeArray = (value: unknown) =>
     : [];
 
 export default async function GeneratePage() {
-  const user = await ensureDevUser();
-  const briefing = await getLatestBriefingForUser(user.id);
+  let briefing: Awaited<ReturnType<typeof getLatestBriefingForUser>> | null = null;
+  let dbError: ReturnType<typeof toDbUserMessage> = null;
+
+  try {
+    const user = await ensureDevUser();
+    briefing = await getLatestBriefingForUser(user.id);
+  } catch (error) {
+    dbError = toDbUserMessage(error);
+  }
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
@@ -31,7 +39,19 @@ export default async function GeneratePage() {
         </p>
       </div>
 
-      {briefing ? (
+      {dbError ? (
+        <Card className="mx-auto w-full max-w-3xl">
+          <CardHeader className="text-center">
+            <CardTitle>Não foi possível acessar o banco</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-center text-sm text-muted-foreground">
+            <p>{dbError.message}</p>
+            {dbError.devDetails ? (
+              <p className="text-xs">Dev: {dbError.devDetails}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : briefing ? (
         <GenerateForm
           briefing={{
             goal: briefing.goal,

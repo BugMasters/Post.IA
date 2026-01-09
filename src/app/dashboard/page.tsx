@@ -13,10 +13,18 @@ import {
 } from "@/components/ui/card";
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
+import { toDbUserMessage } from "@/lib/db/dbError";
 
 export default async function DashboardPage() {
-  const user = await ensureDevUser();
-  const briefing = await getLatestBriefingForUser(user.id);
+  let briefing: Awaited<ReturnType<typeof getLatestBriefingForUser>> | null = null;
+  let dbError: ReturnType<typeof toDbUserMessage> = null;
+
+  try {
+    const user = await ensureDevUser();
+    briefing = await getLatestBriefingForUser(user.id);
+  } catch (error) {
+    dbError = toDbUserMessage(error);
+  }
 
   const bullets = [
     "Público e nível de linguagem",
@@ -33,7 +41,20 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {briefing ? (
+      {dbError ? (
+        <Card className="mx-auto w-full max-w-2xl">
+          <CardHeader>
+            <CardTitle>Não foi possível acessar o banco</CardTitle>
+            <CardDescription>Verifique a configuração local do Postgres.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm text-muted-foreground">
+            <p>{dbError.message}</p>
+            {dbError.devDetails ? (
+              <p className="text-xs">Dev: {dbError.devDetails}</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : briefing ? (
         <Card className="mx-auto w-full max-w-2xl">
           <CardHeader>
             <div>
