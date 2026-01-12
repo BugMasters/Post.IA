@@ -76,8 +76,20 @@ const resolveCodeFromError = (error: Error) => {
   return "LLM_HTTP_ERROR";
 };
 
-const resolveMessage = (code: string, fallback?: string) =>
-  MESSAGE_BY_CODE[code] ?? fallback ?? DEFAULT_MESSAGE;
+const resolveMessage = (
+  code: string,
+  fallback?: string,
+  meta?: Record<string, unknown>
+) => {
+  const base = MESSAGE_BY_CODE[code] ?? fallback ?? DEFAULT_MESSAGE;
+  if (code === "LLM_TRUNCATED" && typeof meta?.label === "string") {
+    return `${base} (label: ${meta.label})`;
+  }
+  if (code === "LLM_TRUNCATED" && Array.isArray(meta?.labels) && meta.labels.length) {
+    return `${base} (labels: ${meta.labels.join(", ")})`;
+  }
+  return base;
+};
 
 const resolveHint = (code: string, fallback?: string) => fallback ?? HINT_BY_CODE[code];
 
@@ -86,9 +98,9 @@ export function toUserMessage(
 ): { code: string; message: string; hint?: string; devDetails?: string } {
   if (isRecord(err) && typeof err.code === "string" && typeof err.message === "string") {
     const code = err.code.toUpperCase();
-    const message = resolveMessage(code, err.message);
-    const hint = resolveHint(code, typeof err.hint === "string" ? err.hint : undefined);
     const dev = isRecord(err.dev) ? (err.dev as DevDetails) : undefined;
+    const message = resolveMessage(code, err.message, dev?.meta);
+    const hint = resolveHint(code, typeof err.hint === "string" ? err.hint : undefined);
     return {
       code,
       message,
@@ -99,10 +111,13 @@ export function toUserMessage(
 
   if (err instanceof Error) {
     const code = resolveCodeFromError(err);
-    const message = resolveMessage(code, err.message);
+    const dev = isRecord((err as { dev?: unknown }).dev)
+      ? ((err as { dev?: DevDetails }).dev as DevDetails)
+      : undefined;
+    const message = resolveMessage(code, err.message, dev?.meta);
     const hint = resolveHint(code);
     const devDetails = buildDevDetails(
-      isRecord((err as { dev?: unknown }).dev) ? ((err as { dev?: DevDetails }).dev as DevDetails) : undefined,
+      dev,
       err.message
     );
     return { code, message, hint, devDetails };

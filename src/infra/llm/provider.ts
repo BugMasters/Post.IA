@@ -3,6 +3,7 @@ export type LlmRequestOptions = {
   num_ctx?: number;
   temperature?: number;
   top_p?: number;
+  timeoutMs?: number;
 };
 
 export interface LlmProvider {

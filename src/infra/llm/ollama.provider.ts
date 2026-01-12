@@ -5,9 +5,10 @@ const DEFAULT_MODEL = "qwen2.5:7b-instruct";
 const DEFAULT_KEEP_ALIVE = "10m";
 const DEFAULT_NUM_PREDICT = 1400;
 const DEFAULT_NUM_CTX = 4096;
-const MIN_NUM_PREDICT = 900;
+const MIN_NUM_PREDICT = 600;
 const MIN_NUM_CTX = 1024;
 const DEFAULT_TIMEOUT_MS = 120000;
+const MAX_TIMEOUT_MS = 240000;
 const DEFAULT_TIMEOUT_PER_TOKEN_MS = 18;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_TOP_P = 0.9;
@@ -186,6 +187,12 @@ export class OllamaProvider implements LlmProvider {
     const keepAlive = strEnv("OLLAMA_KEEP_ALIVE", DEFAULT_KEEP_ALIVE);
     const baseTimeoutMs = numEnv("OLLAMA_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
     const perTokenMs = numEnv("OLLAMA_TIMEOUT_PER_TOKEN_MS", DEFAULT_TIMEOUT_PER_TOKEN_MS);
+    const requestedTimeoutMs =
+      typeof requestOptions?.timeoutMs === "number" ? requestOptions.timeoutMs : undefined;
+    const resolvedBaseTimeoutMs =
+      requestedTimeoutMs !== undefined
+        ? Math.min(requestedTimeoutMs, MAX_TIMEOUT_MS)
+        : baseTimeoutMs;
 
     const requestOnce = async (
       attemptOptions: OllamaOptions,
@@ -289,7 +296,7 @@ export class OllamaProvider implements LlmProvider {
 
     const primaryTimeoutMs = computeTimeoutMs(
       options.num_predict,
-      baseTimeoutMs,
+      resolvedBaseTimeoutMs,
       perTokenMs
     );
 

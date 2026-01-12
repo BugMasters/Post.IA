@@ -5,49 +5,31 @@ import path from "node:path";
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import { getLlmProvider } from "@/infra/llm";
-import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
+import type { GenerateResult, GenerateVariant, GenerateWarning } from "@/infra/llm/types";
 import type { LlmProvider, LlmRequestOptions } from "@/infra/llm/provider";
 import type { BriefingInput } from "@/domain/briefing";
-import { EXPECTED_VARIANT_LABELS, VARIANT_TEMPLATE } from "./constants";
+import { EXPECTED_VARIANT_LABELS } from "./constants";
 import type { GeneratePostFormat } from "./types";
 import { buildGeneratePrompt } from "./promptBuilder";
 import { PLATFORM_GUIDE, type Platform, isPlatform } from "@/domain/platform";
-import { ensureDefaultProfile } from "@/features/profile/profile.actions";
+import { getUserProfile } from "@/features/profile/profile.actions";
 import { toUserMessage, type ActionError } from "@/lib/llm/actionError";
 import { safeParseJson } from "@/lib/llm/jsonSanitize";
 import { formatDbUserMessage, toDbUserMessage } from "@/lib/db/dbError";
+import type { ProfileRecord } from "@/domain/profile";
 
 export type { GeneratePostFormat } from "./types";
 
 type BriefingRecord = NonNullable<Awaited<ReturnType<typeof getLatestBriefingForUser>>>;
 
-const GENERIC_PHRASES = [
-  "transforme sua vida",
-  "ninguém te conta",
-  "no mercado acelerado",
-  "sucesso garantido",
-  "solução completa",
-];
-
-const EXPAND_CHAR_THRESHOLD: Record<Platform, number> = {
-  LINKEDIN: 600,
-  INSTAGRAM: 450,
-};
+const QUALITY_GATE_MIN_CHARS = 900;
 
 const EXPAND_LINE_REQUIREMENTS: Record<Platform, { min: number; max: number }> = {
   LINKEDIN: { min: 10, max: 18 },
   INSTAGRAM: { min: 8, max: 14 },
 };
 
-const DEFAULT_LLM_NUM_PREDICT: Record<Platform, number> = {
-  LINKEDIN: 1400,
-  INSTAGRAM: 900,
-};
-
 const LLM_NUM_CTX_DEFAULT = 4096;
-const MAX_PARALLEL_REQUESTS = 2;
-const TRUNCATION_RETRY_FACTOR = 1.5;
-
 const TRUNCATION_LINE_MIN: Record<Platform, number> = {
   LINKEDIN: 4,
   INSTAGRAM: 3,
@@ -168,40 +150,21 @@ const parseJsonSafely = (raw: string) => {
   return parsed.value;
 };
 
-const isLikelyTruncatedResponse = (raw?: string, reason?: string) => {
-  if (!raw) return false;
+const tryParseJson = (raw: string) => {
   const cleaned = cleanupResponseText(raw);
-  if (!cleaned) return false;
-  const trimmed = cleaned.trim();
-  if (!trimmed.endsWith("}")) return true;
-  if (!reason) return false;
-  return /unexpected end|end of json|unterminated|json_object_not_found/i.test(reason);
-};
-
-const mapWithConcurrency = async <T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, index: number) => Promise<R>
-): Promise<R[]> => {
-  if (items.length === 0) return [];
-  const results: R[] = new Array(items.length);
-  let nextIndex = 0;
-
-  const runWorker = async () => {
-    while (true) {
-      const currentIndex = nextIndex;
-      if (currentIndex >= items.length) return;
-      nextIndex += 1;
-      results[currentIndex] = await worker(items[currentIndex], currentIndex);
-    }
+  if (!cleaned) {
+    return { ok: false as const, reason: "empty_response", cleaned };
+  }
+  const parsed = safeParseJson<unknown>(cleaned);
+  if (parsed.ok) {
+    return { ok: true as const, value: parsed.value, cleaned, usedRepair: parsed.usedRepair };
+  }
+  return {
+    ok: false as const,
+    reason: parsed.reason,
+    cleaned,
+    usedRepair: parsed.usedRepair,
   };
-
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    () => runWorker()
-  );
-  await Promise.all(workers);
-  return results;
 };
 
 const extractVariants = (payload: unknown, raw?: string) => {
@@ -286,6 +249,135 @@ const normalizeVariantContent = (
   };
 };
 
+const ensureNotTruncated = (
+  label: string,
+  lineCount: number,
+  usedContentLines: boolean,
+  platform: Platform,
+  raw?: string
+) => {
+  if (!usedContentLines) return;
+  const truncatedLineMin = TRUNCATION_LINE_MIN[platform];
+  if (lineCount < truncatedLineMin) {
+    throw new VariantParseError(
+      "LLM_TRUNCATED",
+      `Resposta incompleta: content_lines muito curto para "${label}".`,
+      raw,
+      undefined,
+      undefined,
+      { label }
+    );
+  }
+};
+
+const parseSingleVariant = (raw: string, expectedLabel: string, platform: Platform) => {
+  const parsed = tryParseJson(raw);
+
+  if (parsed.ok) {
+    if (isDev) {
+      console.info(`[parse] usedRepair=${parsed.usedRepair}`);
+    }
+    const payload = parsed.value;
+
+    if (typeof payload === "string") {
+      const content = payload.trim();
+      if (!content) {
+        throw new VariantParseError(
+          "LLM_BAD_RESPONSE_PARSE",
+          "Resposta vazia da IA.",
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel }
+        );
+      }
+      return { label: expectedLabel, content };
+    }
+
+    if (isRecord(payload) && Array.isArray(payload.variants)) {
+      if (payload.variants.length !== 1) {
+        throw new VariantParseError(
+          "LLM_BAD_RESPONSE_SCHEMA",
+          "Formato inválido: esperado apenas 1 variante.",
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel }
+        );
+      }
+      const item = payload.variants[0];
+      if (!isRecord(item)) {
+        throw new VariantParseError(
+          "LLM_BAD_RESPONSE_SCHEMA",
+          "Formato inválido: variante não é um objeto.",
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel }
+        );
+      }
+      const parsedLabel = typeof item.label === "string" ? item.label.trim() : "";
+      if (parsedLabel && parsedLabel !== expectedLabel) {
+        throw new VariantParseError(
+          "LLM_BAD_RESPONSE_SCHEMA",
+          `Label inválida: esperado "${expectedLabel}", recebido "${parsedLabel}".`,
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel, receivedLabel: parsedLabel }
+        );
+      }
+      const { content, lineCount, usedContentLines } = normalizeVariantContent(
+        item,
+        expectedLabel,
+        raw
+      );
+      ensureNotTruncated(expectedLabel, lineCount, usedContentLines, platform, raw);
+      return { label: expectedLabel, content };
+    }
+
+    if (isRecord(payload)) {
+      const parsedLabel = typeof payload.label === "string" ? payload.label.trim() : "";
+      if (parsedLabel && parsedLabel !== expectedLabel) {
+        throw new VariantParseError(
+          "LLM_BAD_RESPONSE_SCHEMA",
+          `Label inválida: esperado "${expectedLabel}", recebido "${parsedLabel}".`,
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel, receivedLabel: parsedLabel }
+        );
+      }
+      const { content, lineCount, usedContentLines } = normalizeVariantContent(
+        payload,
+        expectedLabel,
+        raw
+      );
+      ensureNotTruncated(expectedLabel, lineCount, usedContentLines, platform, raw);
+      return { label: expectedLabel, content };
+    }
+  } else {
+    if (isDev) {
+      console.info(
+        `[parse] fallback-to-text label=${expectedLabel} reason=${parsed.reason}`
+      );
+    }
+  }
+
+  const cleaned = cleanupResponseText(raw);
+  if (!cleaned) {
+    throw new VariantParseError(
+      "LLM_BAD_RESPONSE_PARSE",
+      "Resposta vazia da IA.",
+      raw,
+      undefined,
+      undefined,
+      { label: expectedLabel }
+    );
+  }
+  return { label: expectedLabel, content: cleaned };
+};
+
 const validateVariantsStrict = (
   variants: unknown,
   platform: Platform,
@@ -308,7 +400,10 @@ const validateVariantsStrict = (
     throw new VariantParseError(
       "LLM_TRUNCATED",
       `Resposta incompleta: esperado ${EXPECTED_VARIANT_LABELS.length} variantes, recebido ${total}.`,
-      raw
+      raw,
+      undefined,
+      undefined,
+      { labels: EXPECTED_VARIANT_LABELS.slice(0, total) }
     );
   }
 
@@ -336,13 +431,7 @@ const validateVariantsStrict = (
       raw
     );
 
-    if (usedContentLines && lineCount < truncatedLineMin) {
-      throw new VariantParseError(
-        "LLM_TRUNCATED",
-        `Resposta incompleta: content_lines muito curto para "${rawLabel}".`,
-        raw
-      );
-    }
+    ensureNotTruncated(rawLabel, lineCount, usedContentLines, platform, raw);
 
     if (EXPECTED_VARIANT_LABELS.includes(rawLabel as (typeof EXPECTED_VARIANT_LABELS)[number])) {
       foundLabels.add(rawLabel);
@@ -364,7 +453,10 @@ const validateVariantsStrict = (
     throw new VariantParseError(
       "LLM_TRUNCATED",
       `Resposta incompleta: faltando labels: ${missing.join(", ")}.`,
-      raw
+      raw,
+      undefined,
+      undefined,
+      { labels: missing }
     );
   }
 
@@ -396,76 +488,8 @@ const parseStrictVariants = (raw: string, platform: Platform) => {
 };
 
 const resolveCharRange = (platform: Platform) => PLATFORM_GUIDE[platform].charRange;
-
-const hasMinimumBreaks = (content: string) =>
-  (content.match(/\n/g) ?? []).length >= 2;
-
-const extractThemeTokens = (theme: string) =>
-  theme
-    .toLowerCase()
-    .split(/[\s,.;:!?/\\]+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= 4);
-
-const mentionsTheme = (content: string, theme: string) => {
-  const lower = content.toLowerCase();
-  if (theme && lower.includes(theme.toLowerCase())) {
-    return true;
-  }
-  const tokens = extractThemeTokens(theme);
-  return tokens.some((token) => lower.includes(token));
-};
-
-const hasGenericPhrase = (content: string) => {
-  const lower = content.toLowerCase();
-  return GENERIC_PHRASES.some((phrase) => lower.includes(phrase));
-};
-
-const scoreVariant = (content: string, platform: Platform, theme = "") => {
-  const { min } = resolveCharRange(platform);
-  let score = 0;
-
-  if (content.length >= min) score += 1;
-  if (hasMinimumBreaks(content)) score += 1;
-  if (!hasGenericPhrase(content)) score += 1;
-  if (theme && mentionsTheme(content, theme)) score += 1;
-
-  return score;
-};
-
-const getQualityIssues = (content: string, theme: string, platform: Platform) => {
-  const { min } = resolveCharRange(platform);
-  const issues: string[] = [];
-
-  if (content.length < min) {
-    issues.push(`mínimo de ${min} caracteres`);
-  }
-  if (!hasMinimumBreaks(content)) {
-    issues.push("poucas quebras de linha");
-  }
-  if (hasGenericPhrase(content)) {
-    issues.push("frases genéricas");
-  }
-  if (!mentionsTheme(content, theme)) {
-    issues.push("tema não citado");
-  }
-
-  return { score: scoreVariant(content, platform, theme), issues };
-};
-
-const logWeakVariants = (variants: GenerateVariant[], theme: string, platform: Platform) => {
-  if (!isDev) return;
-  variants.forEach((variant) => {
-    const { issues } = getQualityIssues(variant.content, theme, platform);
-    if (issues.length) {
-      console.warn(
-        `[generatePostsAction] variação "${variant.label}" fora do quality gate: ${issues.join(
-          ", "
-        )}`
-      );
-    }
-  });
-};
+const resolveLabelMin = (_label: string, platform: Platform) =>
+  Math.max(QUALITY_GATE_MIN_CHARS, resolveCharRange(platform).min);
 
 const gatherResponseText = async (
   provider: LlmProvider,
@@ -475,12 +499,22 @@ const gatherResponseText = async (
   return provider.generateText(prompt, options);
 };
 
-const resolveLlmRequestOptions = (platform: Platform): LlmRequestOptions => {
+const resolveBaseRequestOptions = (platform: Platform): LlmRequestOptions => {
   const requestedCtx = LLM_NUM_CTX_DEFAULT;
   const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
   return {
-    num_predict: DEFAULT_LLM_NUM_PREDICT[platform] ?? DEFAULT_LLM_NUM_PREDICT.LINKEDIN,
+    num_predict: resolveNumberEnv("OLLAMA_NUM_PREDICT", 900),
     num_ctx: Math.min(requestedCtx, ctxLimit),
+  };
+};
+
+const resolveExpandRequestOptions = (platform: Platform): LlmRequestOptions => {
+  const requestedCtx = LLM_NUM_CTX_DEFAULT;
+  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
+  return {
+    num_predict: resolveNumberEnv("OLLAMA_EXPAND_NUM_PREDICT", 600),
+    num_ctx: Math.min(requestedCtx, ctxLimit),
+    timeoutMs: resolveNumberEnv("OLLAMA_EXPAND_TIMEOUT_MS", 150000),
   };
 };
 
@@ -524,48 +558,21 @@ const logGenerateError = (errorType: string, error: unknown, raw?: string) => {
   console.error(`[generatePostsAction] erro ${errorType}:`, error);
 };
 
-const extractPromptLine = (prompt: string, prefix: string) => {
-  const line = prompt.split("\n").find((entry) => entry.startsWith(prefix));
-  return line ? line.slice(prefix.length).trim() : "";
-};
-
-const buildPromptSummary = (prompt: string) => {
-  const theme = extractPromptLine(prompt, "Tema base:");
-  const format = extractPromptLine(prompt, "Formato solicitado:");
-  const platform = extractPromptLine(prompt, "Plataforma:");
-  const briefing = extractPromptLine(prompt, "Resumo do briefing:");
-  const cta = extractPromptLine(prompt, "CTA sugerido:");
-
-  return [
-    `Tema: ${theme || "não informado"}`,
-    `Formato: ${format || "não informado"}`,
-    `Plataforma: ${platform || "não informado"}`,
-    `Briefing: ${briefing || "não informado"}`,
-    `CTA: ${cta || "não informado"}`,
-  ].join("\n");
-};
-
-const buildRepairPrompt = (prompt: string, raw: string) => {
-  const rawSnippet = buildSnippet(raw, 1800);
-  const summary = buildPromptSummary(prompt);
-
-  return [
-    "Você devolveu uma resposta incompleta/inválida.",
-    "Retorne APENAS JSON válido contendo EXATAMENTE 6 variantes, com as labels na ordem fixa.",
-    "Reescreva TODAS as 6 variantes do zero e garanta JSON bem formado.",
-    "Use content_lines como array de strings, sem \\n dentro de cada item.",
-    "",
-    "Resumo do prompt original:",
-    summary,
-    "",
-    "Resposta recebida (trecho):",
-    rawSnippet,
-    "",
-    "Template de saída obrigatório:",
-    VARIANT_TEMPLATE,
-  ]
-    .filter(Boolean)
-    .join("\n");
+const logVariantTiming = ({
+  label,
+  elapsedMs,
+  len,
+  expand,
+}: {
+  label: string;
+  elapsedMs: number;
+  len: number;
+  expand: boolean;
+}) => {
+  if (!isDev) return;
+  console.info(
+    `[generatePostsAction] label=${label} elapsedMs=${elapsedMs} len=${len} expand=${expand}`
+  );
 };
 
 const buildSubsetTemplate = (labels: string[]) => {
@@ -575,119 +582,51 @@ const buildSubsetTemplate = (labels: string[]) => {
   return `{\n  "variants": [\n    ${items}\n  ]\n}`;
 };
 
-const buildSingleVariantPrompt = ({
-  profile,
-  platform,
-  platformContext,
-  briefing,
+const buildExpandBatchPrompt = ({
   theme,
-  format,
-  directives,
-  label,
+  platform,
+  briefing,
+  profile,
+  variants,
 }: {
-  profile?: ReturnType<typeof normalizeProfileForPrompt> | null;
-  platform: Platform;
-  platformContext?: string;
-  briefing: BriefingInput;
   theme: string;
-  format: GeneratePostFormat;
-  directives: {
-    tone?: string;
-    structure?: string;
-    size?: string;
-    cta?: string;
-  };
-  label: string;
+  platform: Platform;
+  briefing: BriefingRecord;
+  profile?: Awaited<ReturnType<typeof getUserProfile>> | null;
+  variants: GenerateVariant[];
 }) => {
-  const template = buildSubsetTemplate([label]);
-  return buildGeneratePrompt({
-    profile,
-    platform,
-    platformContext,
-    briefing,
-    theme,
-    format,
-    directives,
-    labels: [label],
+  const { min, max } = EXPAND_LINE_REQUIREMENTS[platform];
+  const profileLine = summarizeProfile(profile);
+  const briefingLine = summarizeBriefing(briefing);
+  const template = buildSubsetTemplate(variants.map((variant) => variant.label));
+  const variantBlock = variants
+    .map((variant) => `Label: ${variant.label}\nConteúdo atual:\n${variant.content}`)
+    .join("\n\n");
+  const minPerLabel = variants
+    .map((variant) => `${variant.label}: mínimo ${resolveLabelMin(variant.label, platform)} caracteres`)
+    .join(" | ");
+
+  return [
+    "EXPAND_VARIANTS",
+    "Expanda SOMENTE as variações abaixo.",
+    "Preserve o conteúdo atual e apenas adicione novas linhas/parágrafos ao final.",
+    `Aumente para pelo menos ${min} linhas (máximo ${max}) e respeite o mínimo de caracteres por label.`,
+    `Mínimos por label: ${minPerLabel}.`,
+    "LinkedIn: hook forte nas 2 primeiras linhas, corpo com 2-4 parágrafos curtos e CTA final.",
+    "Instagram: frases diretas, ritmo rápido, CTA para comentar ou salvar.",
+    `Contexto resumido: tema \"${theme}\". Plataforma ${platform}.`,
+    `Perfil: ${profileLine}.`,
+    `Briefing: ${briefingLine}.`,
+    "Retorne APENAS JSON válido com { \"variants\": [ { \"label\": \"...\", \"content_lines\": [\"...\"] } ] }.",
+    "Cada item de content_lines deve ser uma linha simples, sem \\n dentro.",
+    "Mantenha somente as labels enviadas, na mesma ordem.",
+    "Variações para expandir:",
+    variantBlock,
+    "Template de saída obrigatório:",
     template,
-    focusLabel: label,
-    styleLabel: label,
-  });
-};
-
-const buildTruncationMeta = (
-  label: string,
-  options: LlmRequestOptions | undefined,
-  raw?: string
-) => ({
-  label,
-  num_predict: options?.num_predict,
-  num_ctx: options?.num_ctx,
-  raw_len: raw?.length ?? 0,
-});
-
-const bumpPredict = (options: LlmRequestOptions) => ({
-  ...options,
-  num_predict: Math.ceil(
-    (options.num_predict ?? DEFAULT_LLM_NUM_PREDICT.LINKEDIN) * TRUNCATION_RETRY_FACTOR
-  ),
-});
-
-const runSingleVariantPrompt = async ({
-  provider,
-  prompt,
-  label,
-  options,
-}: {
-  provider: LlmProvider;
-  prompt: string;
-  label: string;
-  options: LlmRequestOptions;
-}) => {
-  const runOnce = async (runOptions: LlmRequestOptions) => {
-    const rawResponse = await gatherResponseText(provider, prompt, runOptions);
-    try {
-      const parsed = parseSubsetVariants(rawResponse, [label]);
-      return { variant: parsed[0], raw: rawResponse, options: runOptions };
-    } catch (error) {
-      if (error instanceof VariantParseError && !error.raw) {
-        error.raw = rawResponse;
-      }
-      throw error;
-    }
-  };
-
-  try {
-    return await runOnce(options);
-  } catch (error) {
-    if (!(error instanceof VariantParseError)) {
-      throw error;
-    }
-
-    const raw = error.raw;
-    const truncated =
-      error.code === "LLM_TRUNCATED" || isLikelyTruncatedResponse(raw, error.reason);
-
-    if (!truncated) {
-      throw error;
-    }
-
-    const bumpedOptions = bumpPredict(options);
-    try {
-      return await runOnce(bumpedOptions);
-    } catch (retryError) {
-      const retryRaw =
-        retryError instanceof VariantParseError ? retryError.raw : raw;
-      throw new VariantParseError(
-        "LLM_TRUNCATED",
-        `Resposta incompleta ao gerar "${label}".`,
-        retryRaw,
-        retryError instanceof VariantParseError ? retryError.reason : error.reason,
-        retryError instanceof VariantParseError ? retryError.snippet : error.snippet,
-        buildTruncationMeta(label, bumpedOptions, retryRaw)
-      );
-    }
-  }
+  ]
+    .filter(Boolean)
+    .join("\n");
 };
 
 const toBriefingInput = (briefing: BriefingRecord): BriefingInput => ({
@@ -701,41 +640,32 @@ const toBriefingInput = (briefing: BriefingRecord): BriefingInput => ({
   cta: briefing.cta,
 });
 
-const summarizeProfile = (profile?: Awaited<ReturnType<typeof ensureDefaultProfile>> | null) => {
-  if (!profile) return "sem memória disponível";
+const summarizeProfile = (profile?: Awaited<ReturnType<typeof getUserProfile>> | null) => {
+  if (!profile) return "sem perfil salvo";
   return [
-    profile.roleTitle,
-    profile.niche,
-    profile.audience,
-    profile.languageStyle,
-    profile.goals,
+    profile.displayName,
+    profile.headline,
+    profile.role,
+    profile.writingStyleNotes,
+    profile.bannedClaims,
   ]
     .filter(Boolean)
     .join(" | ");
 };
 
 const normalizeProfileForPrompt = (
-  profile: NonNullable<Awaited<ReturnType<typeof ensureDefaultProfile>>>
-) => ({
+  profile: NonNullable<Awaited<ReturnType<typeof getUserProfile>>>
+): ProfileRecord => ({
   userId: profile.userId,
-  roleTitle: profile.roleTitle ?? undefined,
-  whatIDo: profile.whatIDo ?? undefined,
-  howIWork: profile.howIWork ?? undefined,
-  niche: profile.niche ?? undefined,
-  audience: profile.audience ?? undefined,
-  audienceLevel: (profile.audienceLevel as
-    | "Iniciante"
-    | "Intermediário"
-    | "Avançado"
-    | undefined) ?? undefined,
-  languageStyle: (profile.languageStyle as
-    | "Formal"
-    | "Casual"
-    | "Didático"
-    | "Provocativo"
-    | undefined) ?? undefined,
-  goals: profile.goals ?? undefined,
-  constraints: profile.constraints ?? undefined,
+  displayName: profile.displayName ?? undefined,
+  headline: profile.headline ?? undefined,
+  bio: profile.bio ?? undefined,
+  role: profile.role ?? undefined,
+  website: profile.website ?? undefined,
+  linkedin: profile.linkedin ?? undefined,
+  github: profile.github ?? undefined,
+  writingStyleNotes: profile.writingStyleNotes ?? undefined,
+  bannedClaims: profile.bannedClaims ?? undefined,
 });
 
 const summarizeBriefing = (briefing: BriefingRecord) =>
@@ -749,90 +679,7 @@ const summarizeBriefing = (briefing: BriefingRecord) =>
     .filter(Boolean)
     .join(" | ");
 
-const buildRewritePrompt = ({
-  theme,
-  platform,
-  briefing,
-  profile,
-  variants,
-}: {
-  theme: string;
-  platform: Platform;
-  briefing: BriefingRecord;
-  profile?: Awaited<ReturnType<typeof ensureDefaultProfile>> | null;
-  variants: GenerateVariant[];
-}) => {
-  const { min } = resolveCharRange(platform);
-  const variantBlock = variants
-    .map((variant) => `Label: ${variant.label}\nConteúdo atual:\n${variant.content}`)
-    .join("\n\n");
-
-  const template = buildSubsetTemplate(variants.map((variant) => variant.label));
-  const profileLine = summarizeProfile(profile);
-  const briefingLine = summarizeBriefing(briefing);
-
-  return [
-    "Reescreva SOMENTE as variantes abaixo.",
-    `Reescreva esta variação mantendo o mesmo contexto, aumente para pelo menos ${min} caracteres,`,
-    "deixe mais específico e prático, sem inventar dados, preserve a label.",
-    `Contexto resumido: tema "${theme}". Plataforma ${platform}.`,
-    `Perfil: ${profileLine}.`,
-    `Briefing: ${briefingLine}.`,
-    "Retorne APENAS JSON válido com { \"variants\": [ { \"label\": \"...\", \"content_lines\": [\"...\"] } ] }.",
-    "Cada item de content_lines deve ser uma linha simples, sem \\n dentro.",
-    "Mantenha somente as labels enviadas, na mesma ordem.",
-    "Variantes para reescrever:",
-    variantBlock,
-    "Template de saída obrigatório:",
-    template,
-  ]
-    .filter(Boolean)
-    .join("\n");
-};
-
-const buildExpandPrompt = ({
-  theme,
-  platform,
-  briefing,
-  profile,
-  variants,
-}: {
-  theme: string;
-  platform: Platform;
-  briefing: BriefingRecord;
-  profile?: Awaited<ReturnType<typeof ensureDefaultProfile>> | null;
-  variants: GenerateVariant[];
-}) => {
-  const { min, max } = EXPAND_LINE_REQUIREMENTS[platform];
-  const variantBlock = variants
-    .map((variant) => `Label: ${variant.label}\nConteúdo atual:\n${variant.content}`)
-    .join("\n\n");
-  const template = buildSubsetTemplate(variants.map((variant) => variant.label));
-  const profileLine = summarizeProfile(profile);
-  const briefingLine = summarizeBriefing(briefing);
-  const expandCharMin = EXPAND_CHAR_THRESHOLD[platform];
-
-  return [
-    "Reescreva SOMENTE as variantes abaixo mantendo a ideia central.",
-    `Aumente para pelo menos ${min} linhas (máximo ${max}) e no mínimo ${expandCharMin} caracteres.`,
-    "LinkedIn: hook forte nas 2 primeiras linhas, corpo com 2-4 parágrafos curtos e CTA final.",
-    "Instagram: frases diretas, ritmo rápido, CTA para comentar ou salvar.",
-    `Contexto resumido: tema "${theme}". Plataforma ${platform}.`,
-    `Perfil: ${profileLine}.`,
-    `Briefing: ${briefingLine}.`,
-    "Retorne APENAS JSON válido com { \"variants\": [ { \"label\": \"...\", \"content_lines\": [\"...\"] } ] }.",
-    "Cada item de content_lines deve ser uma linha simples, sem \\n dentro.",
-    "Mantenha somente as labels enviadas, na mesma ordem.",
-    "Variantes para expandir:",
-    variantBlock,
-    "Template de saída obrigatório:",
-    template,
-  ]
-    .filter(Boolean)
-    .join("\n");
-};
-
-const parseSubsetVariants = (raw: string, expectedLabels: string[]) => {
+const parseSubsetVariants = (raw: string, expectedLabels: string[], platform: Platform) => {
   try {
     const payload = parseJsonSafely(raw);
     const variants = extractVariants(payload, raw);
@@ -869,11 +716,19 @@ const parseSubsetVariants = (raw: string, expectedLabels: string[]) => {
         throw new VariantParseError(
           "LLM_BAD_RESPONSE_SCHEMA",
           `Ordem de labels inválida: esperado "${expectedLabel}" na posição ${index + 1}.`,
-          raw
+          raw,
+          undefined,
+          undefined,
+          { label: expectedLabel }
         );
       }
 
-      const { content } = normalizeVariantContent(item, rawLabel, raw);
+      const { content, lineCount, usedContentLines } = normalizeVariantContent(
+        item,
+        rawLabel,
+        raw
+      );
+      ensureNotTruncated(rawLabel, lineCount, usedContentLines, platform, raw);
       parsed.push({ label: rawLabel, content });
     });
 
@@ -886,9 +741,31 @@ const parseSubsetVariants = (raw: string, expectedLabels: string[]) => {
   }
 };
 
-async function expandShortVariantsIfNeeded({
+const getShortWarnings = (
+  variants: GenerateVariant[],
+  platform: Platform
+): { warnings: GenerateWarning[]; shortLabels: string[] } => {
+  const warnings: GenerateWarning[] = [];
+  const shortLabels: string[] = [];
+
+  variants.forEach((variant) => {
+    const minChars = resolveLabelMin(variant.label, platform);
+    if (variant.content.length >= minChars) return;
+    warnings.push({
+      label: variant.label,
+      reason: "TOO_SHORT",
+      minChars,
+      gotChars: variant.content.length,
+    });
+    shortLabels.push(variant.label);
+  });
+
+  return { warnings, shortLabels };
+};
+
+const expandVariant = async ({
   provider,
-  variants,
+  variant,
   theme,
   platform,
   briefing,
@@ -896,42 +773,148 @@ async function expandShortVariantsIfNeeded({
   options,
 }: {
   provider: LlmProvider;
-  variants: GenerateVariant[];
+  variant: GenerateVariant;
   theme: string;
   platform: Platform;
   briefing: BriefingRecord;
-  profile?: Awaited<ReturnType<typeof ensureDefaultProfile>> | null;
+  profile?: Awaited<ReturnType<typeof getUserProfile>> | null;
   options?: LlmRequestOptions;
-}): Promise<GenerateVariant[]> {
-  const minChars = EXPAND_CHAR_THRESHOLD[platform];
-  const shortVariants = variants.filter((variant) => variant.content.length < minChars);
-
-  if (shortVariants.length === 0) {
-    return variants;
-  }
-
-  const expandPrompt = buildExpandPrompt({
+}): Promise<GenerateVariant> => {
+  const expandPrompt = buildExpandBatchPrompt({
     theme,
     platform,
     briefing,
     profile,
-    variants: shortVariants,
+    variants: [variant],
   });
 
-  try {
-    const rawExpand = await gatherResponseText(provider, expandPrompt, options);
-    const expanded = parseSubsetVariants(
-      rawExpand,
-      shortVariants.map((variant) => variant.label)
-    );
-    const expandedMap = new Map(expanded.map((variant) => [variant.label, variant]));
-    return variants.map((variant) => expandedMap.get(variant.label) ?? variant);
-  } catch (error) {
-    const raw = error instanceof VariantParseError ? error.raw : undefined;
-    logGenerateError("expand", error, raw);
-    return variants;
+  const expandStart = Date.now();
+  const rawExpand = await gatherResponseText(provider, expandPrompt, options);
+  const [expanded] = parseSubsetVariants(rawExpand, [variant.label], platform);
+  logVariantTiming({
+    label: variant.label,
+    elapsedMs: Date.now() - expandStart,
+    len: rawExpand.length,
+    expand: true,
+  });
+
+  return expanded ?? variant;
+};
+
+const buildSingleVariantPrompt = ({
+  profile,
+  platform,
+  platformContext,
+  briefing,
+  theme,
+  format,
+  directives,
+  label,
+}: {
+  profile?: ProfileRecord | null;
+  platform: Platform;
+  platformContext?: string;
+  briefing: BriefingInput;
+  theme: string;
+  format: GeneratePostFormat;
+  directives: {
+    tone?: string;
+    structure?: string;
+    size?: string;
+    cta?: string;
+  };
+  label: string;
+}) =>
+  buildGeneratePrompt({
+    profile,
+    platform,
+    platformContext,
+    briefing,
+    theme,
+    format,
+    directives,
+    labels: [label],
+    template: buildSubsetTemplate([label]),
+    focusLabel: label,
+  });
+
+const ensureVariantErrorLabel = (error: unknown, label: string) => {
+  if (!(error instanceof VariantParseError)) return;
+  if (error.meta && typeof error.meta.label === "string") return;
+  error.meta = { ...(error.meta ?? {}), label };
+};
+
+const generateVariantOnce = async ({
+  provider,
+  label,
+  theme,
+  platform,
+  platformContext,
+  briefing,
+  profile,
+  format,
+  directives,
+  options,
+}: {
+  provider: LlmProvider;
+  label: string;
+  theme: string;
+  platform: Platform;
+  platformContext?: string;
+  briefing: BriefingInput;
+  profile?: ProfileRecord | null;
+  format: GeneratePostFormat;
+  directives: {
+    tone?: string;
+    structure?: string;
+    size?: string;
+    cta?: string;
+  };
+  options?: LlmRequestOptions;
+}): Promise<GenerateVariant> => {
+  const prompt = buildSingleVariantPrompt({
+    profile,
+    platform,
+    platformContext,
+    briefing,
+    theme,
+    format,
+    directives,
+    label,
+  });
+  const startedAt = Date.now();
+  const rawResponse = await gatherResponseText(provider, prompt, options);
+  const variant = parseSingleVariant(rawResponse, label, platform);
+  logVariantTiming({
+    label,
+    elapsedMs: Date.now() - startedAt,
+    len: rawResponse.length,
+    expand: false,
+  });
+  return variant;
+};
+
+const generateVariantWithRetry = async (
+  args: Parameters<typeof generateVariantOnce>[0],
+  maxAttempts = 2
+) => {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await generateVariantOnce(args);
+    } catch (error) {
+      ensureVariantErrorLabel(error, args.label);
+      lastError = error;
+      if (attempt >= maxAttempts) break;
+      if (isDev) {
+        console.warn(
+          `[generatePostsAction] retry label=${args.label} attempt=${attempt + 1}`
+        );
+      }
+    }
   }
-}
+  throw lastError;
+};
 
 export async function generatePostsAction(input: {
   theme: string;
@@ -976,105 +959,81 @@ export async function generatePostsAction(input: {
   const platformContext = isPlatform(platformInput)
     ? platform
     : "LINKEDIN (default; TODO: enviar plataforma no form)";
-  let profile: Awaited<ReturnType<typeof ensureDefaultProfile>> | null = null;
+  let profile: Awaited<ReturnType<typeof getUserProfile>> | null = null;
 
   try {
-    profile = await ensureDefaultProfile(briefing);
+    profile = await getUserProfile();
   } catch (error) {
     const dbMessage = toDbUserMessage(error);
     if (dbMessage) {
       return { ok: false, error: formatDbUserMessage(dbMessage) };
     }
     if (process.env.NODE_ENV !== "production") {
-      console.warn("ensureDefaultProfile falhou, seguindo sem perfil.", error);
+      console.warn("getUserProfile falhou, seguindo sem perfil.", error);
     } else {
-      console.error("ensureDefaultProfile falhou, seguindo sem perfil.", error);
+      console.error("getUserProfile falhou, seguindo sem perfil.", error);
     }
   }
   const promptProfile = profile ? normalizeProfileForPrompt(profile) : null;
   const briefingInput = toBriefingInput(briefing);
-  const { min, max } = resolveCharRange(platform);
+  const { max, min: platformMin } = resolveCharRange(platform);
   const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
   const directives = {
     tone,
     structure: "começo/meio/fim com parágrafos coesos",
-    size: `${min}-${max} caracteres`,
+    size: `${platformMin}-${max} caracteres`,
     cta: briefing.cta,
   };
-  const llmOptions = resolveLlmRequestOptions(platform);
+  const baseOptions = resolveBaseRequestOptions(platform);
+  const expandOptions = resolveExpandRequestOptions(platform);
 
   try {
-    const variants = await mapWithConcurrency(
-      [...EXPECTED_VARIANT_LABELS],
-      MAX_PARALLEL_REQUESTS,
-      async (label) => {
-        const prompt = buildSingleVariantPrompt({
-          profile: promptProfile,
-          platform,
-          platformContext,
-          briefing: briefingInput,
-          theme: trimmedTheme,
-          format: input.format,
-          directives,
-          label,
-        });
-        const { variant } = await runSingleVariantPrompt({
-          provider,
-          prompt,
-          label,
-          options: llmOptions,
-        });
-        return variant;
-      }
-    );
-    const expandedVariants = await expandShortVariantsIfNeeded({
-      provider,
-      variants,
-      theme: trimmedTheme,
-      platform,
-      briefing,
-      profile,
-      options: llmOptions,
-    });
-    const weakIndexes = expandedVariants
-      .map((variant, index) => {
-        const evaluation = getQualityIssues(variant.content, trimmedTheme, platform);
-        return evaluation.score < 4 ? index : -1;
-      })
-      .filter((index) => index >= 0);
+    const variants: GenerateVariant[] = [];
 
-    const evaluatedVariants = expandedVariants;
-    if (weakIndexes.length > 0 && process.env.LLM_REWRITE_WEAK === "1") {
-      const weakVariants = weakIndexes.map((index) => evaluatedVariants[index]);
-      const rewritePrompt = buildRewritePrompt({
+    for (const label of EXPECTED_VARIANT_LABELS) {
+      const variant = await generateVariantWithRetry({
+        provider,
+        label,
         theme: trimmedTheme,
         platform,
-        briefing,
-        profile,
-        variants: weakVariants,
+        platformContext,
+        briefing: briefingInput,
+        profile: promptProfile,
+        format: input.format,
+        directives,
+        options: baseOptions,
       });
 
-      try {
-        const rawRewrite = await gatherResponseText(provider, rewritePrompt, llmOptions);
-        const rewritten = parseSubsetVariants(
-          rawRewrite,
-          weakVariants.map((variant) => variant.label)
-        );
-        const rewrittenMap = new Map(rewritten.map((variant) => [variant.label, variant]));
-        const merged = evaluatedVariants.map(
-          (variant) => rewrittenMap.get(variant.label) ?? variant
-        );
-        return { ok: true, variants: merged };
-      } catch (error) {
-        const raw = error instanceof VariantParseError ? error.raw : undefined;
-        logGenerateError("rewrite", error, raw);
-        return { ok: true, variants: evaluatedVariants };
+      const minChars = resolveLabelMin(label, platform);
+      if (variant.content.length < minChars) {
+        try {
+          const expanded = await expandVariant({
+            provider,
+            variant,
+            theme: trimmedTheme,
+            platform,
+            briefing,
+            profile,
+            options: expandOptions,
+          });
+          variants.push(expanded);
+          continue;
+        } catch (error) {
+          ensureVariantErrorLabel(error, label);
+          const raw = error instanceof VariantParseError ? error.raw : undefined;
+          logGenerateError("expand", error, raw);
+        }
       }
+
+      variants.push(variant);
     }
-    if (weakIndexes.length > 0) {
-      logWeakVariants(evaluatedVariants, trimmedTheme, platform);
-    }
-    return { ok: true, variants: evaluatedVariants };
+
+    const { warnings } = getShortWarnings(variants, platform);
+    return {
+      ok: true,
+      variants,
+      warnings: warnings.length ? warnings : undefined,
+    };
   } catch (error) {
     if (error instanceof VariantParseError) {
       const raw = error.raw;
@@ -1111,5 +1070,139 @@ export async function generatePostsAction(input: {
     const resolved =
       userMessage.message || DEFAULT_SERVER_ERROR_MESSAGE;
     return { ok: false, error: formatActionErrorMessage({ ...userMessage, message: resolved }) };
+  }
+}
+
+const normalizeClientVariants = (value: unknown): GenerateVariant[] | null => {
+  if (!Array.isArray(value)) return null;
+  const variants = value
+    .map((item) => {
+      if (!isRecord(item)) return null;
+      const label = typeof item.label === "string" ? item.label.trim() : "";
+      const content = typeof item.content === "string" ? item.content.trim() : "";
+      if (!label || !content) return null;
+      return { label, content };
+    })
+    .filter((item): item is GenerateVariant => Boolean(item));
+  return variants.length ? variants : null;
+};
+
+export async function expandShortVariantsAction(input: {
+  theme: string;
+  format: GeneratePostFormat;
+  platform?: Platform;
+  variants: GenerateVariant[];
+  labels?: string[];
+}): Promise<GenerateResult> {
+  const trimmedTheme = input.theme?.trim() ?? "";
+
+  if (trimmedTheme.length < 3) {
+    return {
+      ok: false,
+      error: "Informe um tema com pelo menos 3 caracteres.",
+    };
+  }
+
+  const baseVariants = normalizeClientVariants(input.variants);
+  if (!baseVariants) {
+    return {
+      ok: false,
+      error: "Não foi possível reprocessar as variações atuais.",
+    };
+  }
+
+  let user: Awaited<ReturnType<typeof ensureDevUser>>;
+  let briefing: BriefingRecord | null;
+
+  try {
+    user = await ensureDevUser();
+    briefing = await getLatestBriefingForUser(user.id);
+  } catch (error) {
+    const dbMessage = toDbUserMessage(error);
+    return {
+      ok: false,
+      error: formatDbUserMessage(
+        dbMessage ?? { message: "Não foi possível acessar o banco de dados." }
+      ),
+    };
+  }
+
+  if (!briefing) {
+    return {
+      ok: false,
+      error: "Salve um briefing antes de gerar os posts.",
+    };
+  }
+
+  const platformInput = input.platform ?? process.env.DEFAULT_PLATFORM;
+  const platform = isPlatform(platformInput) ? platformInput : "LINKEDIN";
+  let profile: Awaited<ReturnType<typeof getUserProfile>> | null = null;
+
+  try {
+    profile = await getUserProfile();
+  } catch (error) {
+    const dbMessage = toDbUserMessage(error);
+    if (dbMessage) {
+      return { ok: false, error: formatDbUserMessage(dbMessage) };
+    }
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("getUserProfile falhou, seguindo sem perfil.", error);
+    } else {
+      console.error("getUserProfile falhou, seguindo sem perfil.", error);
+    }
+  }
+
+  const provider = getLlmProvider();
+  const expandOptions = resolveExpandRequestOptions(platform);
+  const requestedLabels =
+    Array.isArray(input.labels) && input.labels.length
+      ? input.labels.filter((label): label is string => typeof label === "string")
+      : null;
+
+  const { shortLabels } = getShortWarnings(baseVariants, platform);
+  const labelSet = new Set(requestedLabels ?? shortLabels);
+  const labelsToExpand = EXPECTED_VARIANT_LABELS.filter((label) => labelSet.has(label));
+  const labelsToExpandSet = new Set<string>(labelsToExpand);
+
+  if (!labelsToExpand.length) {
+    const { warnings } = getShortWarnings(baseVariants, platform);
+    return {
+      ok: true,
+      variants: baseVariants,
+      warnings: warnings.length ? warnings : undefined,
+    };
+  }
+
+  try {
+    const expandedVariants: GenerateVariant[] = [];
+    for (const variant of baseVariants) {
+      if (!labelsToExpandSet.has(variant.label)) {
+        expandedVariants.push(variant);
+        continue;
+      }
+      const expanded = await expandVariant({
+        provider,
+        variant,
+        theme: trimmedTheme,
+        platform,
+        briefing,
+        profile,
+        options: expandOptions,
+      });
+      expandedVariants.push(expanded);
+    }
+    const { warnings } = getShortWarnings(expandedVariants, platform);
+    return {
+      ok: true,
+      variants: expandedVariants,
+      warnings: warnings.length ? warnings : undefined,
+    };
+  } catch (error) {
+    const raw = error instanceof VariantParseError ? error.raw : undefined;
+    logGenerateError("expand", error, raw);
+    return {
+      ok: false,
+      error: "Não foi possível expandir as variações curtas. Tente novamente.",
+    };
   }
 }

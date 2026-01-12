@@ -31,24 +31,35 @@ const clichesToAvoid = [
 const safeLine = (label: string, value?: string) =>
   value ? `${label}: ${value}` : "";
 
-const summarizeProfile = (profile?: ProfileRecord | null) => {
-  if (!profile) {
-    return "Sem memória salva. Use apenas o briefing e o tema.";
-  }
-
-  const lines = [
-    safeLine("Cargo/identidade", profile.roleTitle),
-    safeLine("O que faz", profile.whatIDo),
-    safeLine("Como trabalha", profile.howIWork),
-    safeLine("Nicho", profile.niche),
-    safeLine("Audiência", profile.audience),
-    safeLine("Nível da audiência", profile.audienceLevel),
-    safeLine("Estilo de linguagem", profile.languageStyle),
-    safeLine("Objetivos", profile.goals),
-    safeLine("Restrições", profile.constraints),
+const formatLinks = (profile: ProfileRecord) => {
+  const items = [
+    profile.website ? `Site: ${profile.website}` : "",
+    profile.linkedin ? `LinkedIn: ${profile.linkedin}` : "",
+    profile.github ? `GitHub: ${profile.github}` : "",
   ].filter(Boolean);
 
-  return lines.length ? lines.join("\n") : "Sem memória salva. Use apenas o briefing e o tema.";
+  return items.length ? items.join(" | ") : "";
+};
+
+const summarizeProfile = (profile?: ProfileRecord | null) => {
+  if (!profile) {
+    return "Sem perfil salvo. Não invente informações sobre o autor.";
+  }
+
+  const links = formatLinks(profile);
+  const lines = [
+    safeLine("Nome", profile.displayName),
+    safeLine("Headline", profile.headline),
+    safeLine("Bio", profile.bio),
+    safeLine("Cargo/identidade", profile.role),
+    safeLine("Links", links),
+    safeLine("Notas de estilo", profile.writingStyleNotes),
+    safeLine("Restrições", profile.bannedClaims),
+  ].filter(Boolean);
+
+  return lines.length
+    ? lines.join("\n")
+    : "Sem perfil salvo. Não invente informações sobre o autor.";
 };
 
 const summarizeBriefing = (briefing: BriefingInput) => {
@@ -117,6 +128,8 @@ export function buildGeneratePrompt({
   const directiveBlock = buildDirectiveBlock(directives, platform);
   const resolvedLabels = labels ?? EXPECTED_VARIANT_LABELS;
   const resolvedTemplate = template ?? VARIANT_TEMPLATE;
+  const variantCount = resolvedLabels.length;
+  const variantLabel = variantCount === 1 ? "variação" : "variações";
   const styleLine = styleLabel ? `Estilo solicitado: ${styleLabel}` : "";
 
   return [
@@ -125,7 +138,9 @@ export function buildGeneratePrompt({
     "",
     "[OUTPUT CONTRACT]",
     "Responda APENAS com JSON válido e estrito. NÃO inclua texto fora do JSON.",
+    `Você deve retornar ${variantCount} ${variantLabel} em um único JSON. Não use markdown.`,
     "NÃO use markdown.",
+    "Não use o campo content. Use sempre content_lines.",
     "NÃO coloque quebras de linha dentro de strings.",
     "content_lines deve ser um array JSON com strings separadas por vírgula.",
     "Cada item do array deve estar entre aspas e separado por vírgula.",
@@ -134,7 +149,7 @@ export function buildGeneratePrompt({
     "Use content_lines como array de strings. Cada linha deve ser uma string simples, sem \\n dentro.",
     resolvedTemplate,
     "",
-    "[1 AUTOR (MEMÓRIA FIXA)]",
+    "[AUTHOR_PROFILE]",
     summarizeProfile(profile),
     "",
     "[2 PLATAFORMA]",
