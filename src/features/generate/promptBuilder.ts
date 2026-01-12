@@ -173,6 +173,7 @@ export function buildGeneratePrompt({
     "Sem texto genérico. Cada variação deve mudar o ângulo, mas manter o mesmo contexto.",
     "Exija começo/meio/fim. Parágrafos devem se conectar.",
     "Evite respostas curtas ou truncadas.",
+    "Escreva entre 900 e 1100 caracteres.",
     "Inclua 1 exemplo concreto e 1 insight aplicável por variação.",
     "Não invente dados, números, cases, clientes ou resultados.",
     `Não use clichês ou frases vazias como: ${clichesToAvoid.join(", ")}.`,
