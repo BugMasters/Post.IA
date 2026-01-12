@@ -1,4 +1,4 @@
-import { LlmProvider, type LlmRequestOptions } from "./provider";
+import { LlmProvider, type LlmRequestOptions, type LlmResponse } from "./provider";
 
 const DEFAULT_BASE_URL = "http://localhost:11434";
 const DEFAULT_MODEL = "qwen2.5:7b-instruct";
@@ -30,6 +30,7 @@ const strEnv = (name: string, fallback: string): string => process.env[name] ?? 
 type OllamaResponse = {
   response?: string;
   message?: { content?: string };
+  done_reason?: string;
   error?: string;
 };
 
@@ -167,7 +168,7 @@ const shouldRetry = (error: unknown) => {
 };
 
 export class OllamaProvider implements LlmProvider {
-  async generateText(prompt: string, requestOptions?: LlmRequestOptions): Promise<string> {
+  async generateText(prompt: string, requestOptions?: LlmRequestOptions): Promise<LlmResponse> {
     const fallbackPredict =
       requestOptions?.num_predict ?? numEnv("OLLAMA_NUM_PREDICT", DEFAULT_NUM_PREDICT);
     const fallbackCtx =
@@ -281,7 +282,7 @@ export class OllamaProvider implements LlmProvider {
         }
 
         ok = true;
-        return result;
+        return { text: result, doneReason: payload.done_reason };
       } finally {
         clearTimeout(timeoutId);
         if (isDev) {

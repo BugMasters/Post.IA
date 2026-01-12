@@ -19,6 +19,7 @@ const MESSAGE_BY_CODE: Record<string, string> = {
   LLM_BAD_RESPONSE_PARSE: "A IA retornou um formato inválido. Tente novamente.",
   LLM_BAD_RESPONSE_SCHEMA: "A IA respondeu em formato inesperado. Tente novamente.",
   LLM_TRUNCATED: "A IA cortou a resposta por limite de geração. Tente novamente.",
+  LLM_QUALITY_GATE: "A IA gerou uma resposta curta demais. Tente novamente.",
 };
 
 const HINT_BY_CODE: Record<string, string> = {

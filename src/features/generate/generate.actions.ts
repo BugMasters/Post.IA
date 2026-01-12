@@ -6,7 +6,7 @@ import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import { getLlmProvider } from "@/infra/llm";
 import type { GenerateResult, GenerateVariant, GenerateWarning } from "@/infra/llm/types";
-import type { LlmProvider, LlmRequestOptions } from "@/infra/llm/provider";
+import type { LlmProvider, LlmRequestOptions, LlmResponse } from "@/infra/llm/provider";
 import type { BriefingInput } from "@/domain/briefing";
 import { EXPECTED_VARIANT_LABELS } from "./constants";
 import type { GeneratePostFormat } from "./types";
@@ -37,6 +37,8 @@ const TRUNCATION_LINE_MIN: Record<Platform, number> = {
 
 const DEFAULT_SERVER_ERROR_MESSAGE = "Não foi possível gerar variações no momento.";
 const PARSE_RETRY_ERROR_MESSAGE = "Não foi possível gerar variações. Tente novamente.";
+const QUALITY_GATE_ERROR_MESSAGE =
+  "A IA gerou uma resposta curta demais. Tente novamente.";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -49,13 +51,21 @@ const cleanupResponseText = (raw: string) =>
 
 class VariantParseError extends Error {
   raw?: string;
-  code: "LLM_BAD_RESPONSE_PARSE" | "LLM_BAD_RESPONSE_SCHEMA" | "LLM_TRUNCATED";
+  code:
+    | "LLM_BAD_RESPONSE_PARSE"
+    | "LLM_BAD_RESPONSE_SCHEMA"
+    | "LLM_TRUNCATED"
+    | "LLM_QUALITY_GATE";
   reason?: string;
   snippet?: string;
   meta?: Record<string, unknown>;
 
   constructor(
-    code: "LLM_BAD_RESPONSE_PARSE" | "LLM_BAD_RESPONSE_SCHEMA" | "LLM_TRUNCATED",
+    code:
+      | "LLM_BAD_RESPONSE_PARSE"
+      | "LLM_BAD_RESPONSE_SCHEMA"
+      | "LLM_TRUNCATED"
+      | "LLM_QUALITY_GATE",
     message: string,
     raw?: string,
     reason?: string,
@@ -495,9 +505,7 @@ const gatherResponseText = async (
   provider: LlmProvider,
   prompt: string,
   options?: LlmRequestOptions
-) => {
-  return provider.generateText(prompt, options);
-};
+): Promise<LlmResponse> => provider.generateText(prompt, options);
 
 const resolveBaseRequestOptions = (platform: Platform): LlmRequestOptions => {
   const requestedCtx = LLM_NUM_CTX_DEFAULT;
@@ -518,12 +526,22 @@ const resolveExpandRequestOptions = (platform: Platform): LlmRequestOptions => {
   };
 };
 
+const resolveContinuationRequestOptions = (platform: Platform): LlmRequestOptions => {
+  const requestedCtx = LLM_NUM_CTX_DEFAULT;
+  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
+  return {
+    num_predict: resolveNumberEnv("OLLAMA_CONTINUE_NUM_PREDICT", 800),
+    num_ctx: Math.min(requestedCtx, ctxLimit),
+    timeoutMs: resolveNumberEnv("OLLAMA_CONTINUE_TIMEOUT_MS", 150000),
+  };
+};
 const resolveErrorType = (
   error: unknown
-): "parse" | "schema" | "truncated" | "timeout" | "http" => {
+): "parse" | "schema" | "truncated" | "quality_gate" | "timeout" | "http" => {
   if (error instanceof VariantParseError) {
     if (error.code === "LLM_BAD_RESPONSE_PARSE") return "parse";
     if (error.code === "LLM_TRUNCATED") return "truncated";
+    if (error.code === "LLM_QUALITY_GATE") return "quality_gate";
     return "schema";
   }
   if (error instanceof Error) {
@@ -562,16 +580,18 @@ const logVariantTiming = ({
   label,
   elapsedMs,
   len,
-  expand,
+  doneReason,
+  continuation,
 }: {
   label: string;
   elapsedMs: number;
   len: number;
-  expand: boolean;
+  doneReason?: string;
+  continuation: boolean;
 }) => {
   if (!isDev) return;
   console.info(
-    `[generatePostsAction] label=${label} elapsedMs=${elapsedMs} len=${len} expand=${expand}`
+    `[generatePostsAction] label=${label} elapsedMs=${elapsedMs} len=${len} done_reason=${doneReason ?? "unknown"} continuation=${continuation}`
   );
 };
 
@@ -790,15 +810,72 @@ const expandVariant = async ({
 
   const expandStart = Date.now();
   const rawExpand = await gatherResponseText(provider, expandPrompt, options);
-  const [expanded] = parseSubsetVariants(rawExpand, [variant.label], platform);
+  const [expanded] = parseSubsetVariants(rawExpand.text, [variant.label], platform);
   logVariantTiming({
     label: variant.label,
     elapsedMs: Date.now() - expandStart,
-    len: rawExpand.length,
-    expand: true,
+    len: rawExpand.text.length,
+    doneReason: rawExpand.doneReason,
+    continuation: false,
   });
 
   return expanded ?? variant;
+};
+
+const buildContinuationPrompt = (label: string, content: string) =>
+  [
+    "CONTINUE_VARIANT",
+    "Continue exatamente do ponto onde parou. Não reescreva. Não use JSON. Apenas continue o texto.",
+    `Label: ${label}`,
+    "Texto atual:",
+    content,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+const mergeContinuation = (current: string, continuation: string) => {
+  const base = current.trimEnd();
+  const extra = continuation.replace(/^\s+/, "");
+  if (!extra) return base;
+  const needsSpace =
+    base.length > 0 && !/\s$/.test(current) && !/^[,.;:!?]/.test(extra);
+  const separator = needsSpace ? " " : "";
+  return `${base}${separator}${extra}`.trim();
+};
+
+const continueVariant = async ({
+  provider,
+  label,
+  content,
+  options,
+}: {
+  provider: LlmProvider;
+  label: string;
+  content: string;
+  options?: LlmRequestOptions;
+}): Promise<string> => {
+  const prompt = buildContinuationPrompt(label, content);
+  const startedAt = Date.now();
+  const rawContinuation = await gatherResponseText(provider, prompt, options);
+  logVariantTiming({
+    label,
+    elapsedMs: Date.now() - startedAt,
+    len: rawContinuation.text.length,
+    doneReason: rawContinuation.doneReason,
+    continuation: true,
+  });
+  const continuationText = cleanupResponseText(rawContinuation.text);
+  if (!continuationText) {
+    throw new VariantParseError(
+      "LLM_BAD_RESPONSE_PARSE",
+      "Continuação vazia da IA.",
+      rawContinuation.text,
+      undefined,
+      undefined,
+      { label }
+    );
+  }
+  return continuationText;
 };
 
 const buildSingleVariantPrompt = ({
@@ -884,13 +961,47 @@ const generateVariantOnce = async ({
   });
   const startedAt = Date.now();
   const rawResponse = await gatherResponseText(provider, prompt, options);
-  const variant = parseSingleVariant(rawResponse, label, platform);
+  const variant = parseSingleVariant(rawResponse.text, label, platform);
   logVariantTiming({
     label,
     elapsedMs: Date.now() - startedAt,
-    len: rawResponse.length,
-    expand: false,
+    len: rawResponse.text.length,
+    doneReason: rawResponse.doneReason,
+    continuation: false,
   });
+  const minChars = resolveLabelMin(label, platform);
+
+  if (rawResponse.doneReason === "length") {
+    if (variant.content.length >= minChars) {
+      if (isDev) {
+        console.warn(
+          `[generatePostsAction] done_reason=length label=${label} len=${variant.content.length}`
+        );
+      }
+      return variant;
+    }
+
+    const continuationOptions = resolveContinuationRequestOptions(platform);
+    const continuationText = await continueVariant({
+      provider,
+      label,
+      content: variant.content,
+      options: continuationOptions,
+    });
+    const mergedContent = mergeContinuation(variant.content, continuationText);
+    if (mergedContent.length < minChars) {
+      throw new VariantParseError(
+        "LLM_QUALITY_GATE",
+        `Resposta curta após continuação para "${label}".`,
+        undefined,
+        undefined,
+        undefined,
+        { label, minChars, gotChars: mergedContent.length }
+      );
+    }
+    return { label, content: mergedContent };
+  }
+
   return variant;
 };
 
@@ -905,6 +1016,9 @@ const generateVariantWithRetry = async (
     } catch (error) {
       ensureVariantErrorLabel(error, args.label);
       lastError = error;
+      if (error instanceof VariantParseError && error.code === "LLM_QUALITY_GATE") {
+        break;
+      }
       if (attempt >= maxAttempts) break;
       if (isDev) {
         console.warn(
@@ -1045,15 +1159,21 @@ export async function generatePostsAction(input: {
         error.meta || error.reason
           ? { ...(error.meta ?? {}), ...(error.reason ? { reason: error.reason } : {}) }
           : undefined;
+      const message =
+        error.code === "LLM_QUALITY_GATE"
+          ? QUALITY_GATE_ERROR_MESSAGE
+          : PARSE_RETRY_ERROR_MESSAGE;
       const actionError: ActionError = {
         code: error.code,
-        message: PARSE_RETRY_ERROR_MESSAGE,
+        message,
         dev: {
           kind:
             error.code === "LLM_BAD_RESPONSE_PARSE"
               ? "parse"
               : error.code === "LLM_TRUNCATED"
                 ? "truncated"
+                : error.code === "LLM_QUALITY_GATE"
+                  ? "quality_gate"
                 : "schema",
           meta,
           snippet: devSnippet,

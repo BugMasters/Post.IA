@@ -6,6 +6,11 @@ export type LlmRequestOptions = {
   timeoutMs?: number;
 };
 
+export type LlmResponse = {
+  text: string;
+  doneReason?: string;
+};
+
 export interface LlmProvider {
-  generateText(prompt: string, options?: LlmRequestOptions): Promise<string>;
+  generateText(prompt: string, options?: LlmRequestOptions): Promise<LlmResponse>;
 }
