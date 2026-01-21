@@ -1,19 +1,20 @@
-import { LlmProvider } from "./provider";
+import type { LlmProvider } from "./provider";
 import { GeminiProvider } from "./gemini.provider";
 
 let cachedProvider: LlmProvider | null = null;
 
 export function getLlmProvider(): LlmProvider {
-  if (cachedProvider) {
-    return cachedProvider;
-  }
+  if (cachedProvider) return cachedProvider;
 
   const provider = (process.env.LLM_PROVIDER ?? "gemini").trim().toLowerCase();
 
-  if (provider === "gemini") {
+  // Gemini-only (Ollama removido do projeto)
+  if (provider !== "gemini") {
+    // fallback seguro para evitar crash por env errado
     cachedProvider = new GeminiProvider();
     return cachedProvider;
   }
 
-  throw new Error(`Provedor LLM desconhecido: ${provider}`);
+  cachedProvider = new GeminiProvider();
+  return cachedProvider;
 }
