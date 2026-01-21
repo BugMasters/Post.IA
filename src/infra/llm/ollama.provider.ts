@@ -169,14 +169,21 @@ const shouldRetry = (error: unknown) => {
 
 export class OllamaProvider implements LlmProvider {
   async generateText(prompt: string, requestOptions?: LlmRequestOptions): Promise<LlmResponse> {
+    const requestMode = requestOptions?.mode ?? "default";
     const fallbackPredict =
-      requestOptions?.num_predict ?? numEnv("OLLAMA_NUM_PREDICT", DEFAULT_NUM_PREDICT);
+      requestOptions?.num_predict ??
+      requestOptions?.maxTokens ??
+      numEnv("OLLAMA_NUM_PREDICT", DEFAULT_NUM_PREDICT);
     const fallbackCtx =
-      requestOptions?.num_ctx ?? numEnv("OLLAMA_NUM_CTX", DEFAULT_NUM_CTX);
+      requestOptions?.num_ctx ??
+      requestOptions?.contextLimit ??
+      numEnv("OLLAMA_NUM_CTX", DEFAULT_NUM_CTX);
     const fallbackTemperature =
       requestOptions?.temperature ?? numEnv("OLLAMA_TEMPERATURE", DEFAULT_TEMPERATURE);
     const fallbackTopP =
-      requestOptions?.top_p ?? numEnv("OLLAMA_TOP_P", DEFAULT_TOP_P);
+      requestOptions?.top_p ??
+      requestOptions?.topP ??
+      numEnv("OLLAMA_TOP_P", DEFAULT_TOP_P);
     const options: OllamaOptions = {
       num_predict: Math.max(fallbackPredict, MIN_NUM_PREDICT),
       num_ctx: Math.max(fallbackCtx, MIN_NUM_CTX),
@@ -289,7 +296,7 @@ export class OllamaProvider implements LlmProvider {
           const elapsedMs = Date.now() - startedAt;
           const status = ok ? "ok" : "err";
           console.info(
-            `[ollama] ${status} elapsedMs=${elapsedMs} model=${MODEL} num_predict=${attemptOptions.num_predict} num_ctx=${attemptOptions.num_ctx}`
+            `[ollama] ${status} elapsedMs=${elapsedMs} model=${MODEL} num_predict=${attemptOptions.num_predict} num_ctx=${attemptOptions.num_ctx} mode=${requestMode}`
           );
         }
       }
