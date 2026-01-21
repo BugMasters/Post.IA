@@ -1,0 +1,20 @@
+-- Update UserProfile to author-focused fields
+ALTER TABLE "UserProfile"
+  DROP COLUMN "roleTitle",
+  DROP COLUMN "whatIDo",
+  DROP COLUMN "howIWork",
+  DROP COLUMN "niche",
+  DROP COLUMN "audience",
+  DROP COLUMN "audienceLevel",
+  DROP COLUMN "languageStyle",
+  DROP COLUMN "goals",
+  DROP COLUMN "constraints",
+  ADD COLUMN "displayName" TEXT,
+  ADD COLUMN "headline" TEXT,
+  ADD COLUMN "bio" TEXT,
+  ADD COLUMN "role" TEXT,
+  ADD COLUMN "website" TEXT,
+  ADD COLUMN "linkedin" TEXT,
+  ADD COLUMN "github" TEXT,
+  ADD COLUMN "writingStyleNotes" TEXT,
+  ADD COLUMN "bannedClaims" TEXT;

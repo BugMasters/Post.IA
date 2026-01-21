@@ -37,18 +37,18 @@ model Briefing {
 }
 
 model UserProfile {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  roleTitle     String?
-  whatIDo       String?
-  howIWork      String?
-  niche         String?
-  audience      String?
-  audienceLevel String?
-  languageStyle String?
-  goals         String?
-  constraints   String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  displayName       String?
+  headline          String?
+  bio               String?
+  role              String?
+  website           String?
+  linkedin          String?
+  github            String?
+  writingStyleNotes String?
+  bannedClaims      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
