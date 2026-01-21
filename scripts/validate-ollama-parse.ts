@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { repairMissingCommasInContentLines, safeParseJson } from "../src/lib/llm/jsonSanitize";
+import { safeParseJsonFromLlm } from "../src/lib/llm/jsonSanitizer";
 
 type Variant = { label: string; content_lines: string[] };
 type Payload = { variants: Variant[] };
@@ -8,21 +8,13 @@ type Payload = { variants: Variant[] };
 const fixturePath = resolve("src/__fixtures__/ollama_bad_json_missing_commas.txt");
 const raw = readFileSync(fixturePath, "utf-8");
 
-const parsed = safeParseJson<Payload>(raw);
+const parsed = safeParseJsonFromLlm(raw);
 let payload: Payload;
 
 if (parsed.ok) {
-  payload = parsed.value;
+  payload = parsed.value as Payload;
 } else {
-  if (!raw.includes("\"content_lines\"")) {
-    throw new Error(`Parse falhou: ${parsed.reason}`);
-  }
-  const repaired = repairMissingCommasInContentLines(raw);
-  const repairedParsed = safeParseJson<Payload>(repaired);
-  if (!repairedParsed.ok) {
-    throw new Error(`Parse falhou mesmo após repair: ${repairedParsed.reason}`);
-  }
-  payload = repairedParsed.value;
+  throw new Error(`Parse falhou: ${parsed.error}`);
 }
 
 if (!payload || !Array.isArray(payload.variants)) {
