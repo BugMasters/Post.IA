@@ -123,6 +123,9 @@ export default async function DashboardPage() {
             <Button variant="outline" asChild className="w-full sm:w-auto">
               <Link href="/briefing">Editar briefing</Link>
             </Button>
+            <Button variant="outline" asChild className="w-full sm:w-auto">
+              <Link href="/profile">Editar perfil</Link>
+            </Button>
           </CardFooter>
         </Card>
       ) : (

@@ -1,20 +1,32 @@
 import { z } from "zod";
 
-export const audienceLevelOptions = ["Iniciante", "Intermediário", "Avançado"] as const;
-export const languageStyleOptions = ["Formal", "Casual", "Didático", "Provocativo"] as const;
+const optionalText = z.string().trim().optional();
 
 export const profileSchema = z.object({
   userId: z.string().min(1),
-  roleTitle: z.string().optional(),
-  whatIDo: z.string().optional(),
-  howIWork: z.string().optional(),
-  niche: z.string().optional(),
-  audience: z.string().optional(),
-  audienceLevel: z.enum(audienceLevelOptions).optional(),
-  languageStyle: z.enum(languageStyleOptions).optional(),
-  goals: z.string().optional(),
-  constraints: z.string().optional(),
+  displayName: optionalText,
+  headline: optionalText,
+  bio: optionalText,
+  role: optionalText,
+  website: optionalText,
+  linkedin: optionalText,
+  github: optionalText,
+  writingStyleNotes: optionalText,
+  bannedClaims: optionalText,
+});
+
+export const profileFormSchema = z.object({
+  displayName: optionalText,
+  headline: optionalText,
+  bio: optionalText,
+  role: optionalText,
+  website: optionalText,
+  linkedin: optionalText,
+  github: optionalText,
+  writingStyleNotes: optionalText,
+  bannedClaims: optionalText,
 });
 
 export type ProfileInput = z.input<typeof profileSchema>;
 export type ProfileRecord = z.output<typeof profileSchema>;
+export type ProfileFormValues = z.input<typeof profileFormSchema>;

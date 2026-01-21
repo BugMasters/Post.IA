@@ -1,56 +1,45 @@
 "use server";
 
+import { ZodError } from "zod";
 import { ensureDevUser } from "@/infra/dev/devUser";
-import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
+import { profileFormSchema, type ProfileFormValues } from "@/domain/profile";
+import { formatDbUserMessage, toDbUserMessage } from "@/lib/db/dbError";
 import { getProfileForUser, upsertProfileForUser } from "./profile.repository";
 import { isMissingProfileTableError, MissingUserProfileTableError } from "./profile.errors";
 
-const DEFAULT_CONSTRAINTS =
-  "não usar clichês, não prometer resultados, não exagerar autoridade";
-
-const mapAudienceLevel = (value?: string | null) => {
-  if (!value) return undefined;
-  if (value === "Leigo") return "Iniciante";
-  if (value === "Técnico") return "Avançado";
-  return "Intermediário";
-};
-
-export async function getMyProfile() {
+export async function getUserProfile() {
   const user = await ensureDevUser();
   return getProfileForUser(user.id);
 }
 
-export async function ensureDefaultProfile(briefing?: Awaited<ReturnType<typeof getLatestBriefingForUser>> | null) {
-  const user = await ensureDevUser();
+export async function upsertUserProfile(values: ProfileFormValues) {
   try {
-    const existing = await getProfileForUser(user.id);
+    const input = profileFormSchema.parse(values);
+    const user = await ensureDevUser();
 
-    if (existing) {
-      return existing;
-    }
+    await upsertProfileForUser(user.id, input);
 
-    const latestBriefing = briefing ?? (await getLatestBriefingForUser(user.id));
-    const avoidList =
-      latestBriefing?.avoid?.length ? latestBriefing.avoid.join(", ") : "";
-
-    const constraints = avoidList
-      ? `${DEFAULT_CONSTRAINTS}; evitar ${avoidList}`
-      : DEFAULT_CONSTRAINTS;
-
-    return await upsertProfileForUser(user.id, {
-      roleTitle: "Criador de conteúdo",
-      audienceLevel: mapAudienceLevel(latestBriefing?.audienceLevel),
-      languageStyle: "Didático",
-      goals: latestBriefing?.goal,
-      audience: latestBriefing?.audience,
-      whatIDo: latestBriefing?.offer,
-      howIWork: latestBriefing?.differentiation,
-      constraints,
-    });
+    return { ok: true } as const;
   } catch (error) {
     if (isMissingProfileTableError(error)) {
-      throw new MissingUserProfileTableError();
+      const dbMessage = toDbUserMessage(new MissingUserProfileTableError());
+      if (dbMessage) {
+        return { ok: false, error: formatDbUserMessage(dbMessage) } as const;
+      }
     }
-    throw error;
+
+    if (error instanceof ZodError) {
+      const msg = error.issues.map((issue) => issue.message).join(", ");
+      return { ok: false, error: msg || "Dados inválidos." } as const;
+    }
+
+    const dbMessage = toDbUserMessage(error);
+    if (dbMessage) {
+      return { ok: false, error: formatDbUserMessage(dbMessage) } as const;
+    }
+
+    const message =
+      error instanceof Error ? error.message : "Erro desconhecido ao salvar.";
+    return { ok: false, error: message } as const;
   }
 }
