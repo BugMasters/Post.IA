@@ -16,8 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { BriefingSnapshot, FormatOption } from "@/features/generate/mockGenerator";
-import { GeneratePostFormat, generatePostsAction } from "@/features/generate/generate.actions";
-import type { GenerateVariant } from "@/infra/llm/types";
+import {
+  GeneratePostFormat,
+  generatePostsAction,
+  expandShortVariantsAction,
+} from "@/features/generate/generate.actions";
+import type { GenerateVariant, GenerateWarning } from "@/infra/llm/types";
 
 const formatOptions: FormatOption[] = ["Apenas texto", "Foto + texto", "Apenas foto"];
 
@@ -35,10 +39,16 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
   const [theme, setTheme] = React.useState("");
   const [format, setFormat] = React.useState<FormatOption>("Apenas texto");
   const [variants, setVariants] = React.useState<GenerateVariant[]>([]);
+  const [warnings, setWarnings] = React.useState<GenerateWarning[]>([]);
   const [fieldError, setFieldError] = React.useState<string | null>(null);
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [isExpanding, setIsExpanding] = React.useState(false);
+  const [lastRequest, setLastRequest] = React.useState<{
+    theme: string;
+    format: GeneratePostFormat;
+  } | null>(null);
 
   const toneLabels = briefing.tone.length ? briefing.tone : ["Tom neutro"];
 
@@ -59,12 +69,14 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
 
     setFieldError(null);
     setServerError(null);
+    setWarnings([]);
     setIsGenerating(true);
 
     try {
+      const resolvedFormat = formatTranslator[format];
       const result = await generatePostsAction({
         theme: trimmedTheme,
-        format: formatTranslator[format],
+        format: resolvedFormat,
       });
 
       if (!result.ok) {
@@ -73,12 +85,49 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
       }
 
       setVariants(result.variants);
+      setWarnings(result.warnings ?? []);
+      setLastRequest({ theme: trimmedTheme, format: resolvedFormat });
       setCopiedId(null);
     } catch (caughtError) {
       console.error("[GenerateForm] geração falhou:", caughtError);
       setServerError("Erro inesperado ao gerar as variações.");
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const shortLabels = React.useMemo(
+    () => warnings.map((warning) => warning.label),
+    [warnings]
+  );
+
+  const handleExpandShort = async () => {
+    if (!lastRequest || shortLabels.length === 0 || variants.length === 0) {
+      return;
+    }
+    setServerError(null);
+    setIsExpanding(true);
+
+    try {
+      const result = await expandShortVariantsAction({
+        theme: lastRequest.theme,
+        format: lastRequest.format,
+        variants,
+        labels: shortLabels,
+      });
+
+      if (!result.ok) {
+        setServerError(result.error);
+        return;
+      }
+
+      setVariants(result.variants);
+      setWarnings(result.warnings ?? []);
+    } catch (caughtError) {
+      console.error("[GenerateForm] expansão falhou:", caughtError);
+      setServerError("Erro inesperado ao expandir as variações.");
+    } finally {
+      setIsExpanding(false);
     }
   };
 
@@ -114,6 +163,23 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
             <Alert variant="destructive">
               <AlertTitle>Erro ao gerar variações</AlertTitle>
               <AlertDescription>{serverError}</AlertDescription>
+            </Alert>
+          )}
+          {warnings.length > 0 && (
+            <Alert>
+              <AlertTitle>Algumas variações ficaram curtas</AlertTitle>
+              <AlertDescription className="flex flex-wrap items-center gap-2">
+                <span>Clique em “Regerar curtas” para expandi-las.</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleExpandShort}
+                  disabled={isExpanding}
+                >
+                  {isExpanding ? "Regerando..." : "Regerar curtas"}
+                </Button>
+              </AlertDescription>
             </Alert>
           )}
           <form onSubmit={handleSubmit} className="space-y-4">

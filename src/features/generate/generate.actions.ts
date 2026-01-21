@@ -10,11 +10,11 @@ import type { LlmProvider, LlmRequestOptions, LlmResponse } from "@/infra/llm/pr
 import type { BriefingInput } from "@/domain/briefing";
 import { EXPECTED_VARIANT_LABELS } from "./constants";
 import type { GeneratePostFormat } from "./types";
-import { buildGeneratePrompt } from "./promptBuilder";
+import { buildDraftPrompt, buildExpandPrompt, buildFixJsonPrompt } from "./promptBuilder";
 import { PLATFORM_GUIDE, type Platform, isPlatform } from "@/domain/platform";
 import { getUserProfile } from "@/features/profile/profile.actions";
 import { toUserMessage, type ActionError } from "@/lib/llm/actionError";
-import { safeParseJson } from "@/lib/llm/jsonSanitize";
+import { safeParseJsonFromLlm } from "@/lib/llm/jsonSanitizer";
 import { formatDbUserMessage, toDbUserMessage } from "@/lib/db/dbError";
 import type { ProfileRecord } from "@/domain/profile";
 
@@ -22,14 +22,15 @@ export type { GeneratePostFormat } from "./types";
 
 type BriefingRecord = NonNullable<Awaited<ReturnType<typeof getLatestBriefingForUser>>>;
 
-const QUALITY_GATE_MIN_CHARS = 900;
-
-const EXPAND_LINE_REQUIREMENTS: Record<Platform, { min: number; max: number }> = {
-  LINKEDIN: { min: 10, max: 18 },
-  INSTAGRAM: { min: 8, max: 14 },
-};
-
-const LLM_NUM_CTX_DEFAULT = 4096;
+const DRAFT_NUM_PREDICT_DEFAULT = 280;
+const DRAFT_NUM_CTX_DEFAULT = 2048;
+const DRAFT_TEMPERATURE_DEFAULT = 0.6;
+const EXPAND_NUM_PREDICT_DEFAULT = 800;
+const EXPAND_NUM_CTX_DEFAULT = 4096;
+const EXPAND_TEMPERATURE_DEFAULT = 0.7;
+const FIX_JSON_NUM_PREDICT_DEFAULT = 500;
+const FIX_JSON_NUM_CTX_DEFAULT = 1024;
+const FIX_JSON_TEMPERATURE_DEFAULT = 0.2;
 const TRUNCATION_LINE_MIN: Record<Platform, number> = {
   LINKEDIN: 4,
   INSTAGRAM: 3,
@@ -38,7 +39,7 @@ const TRUNCATION_LINE_MIN: Record<Platform, number> = {
 const DEFAULT_SERVER_ERROR_MESSAGE = "Não foi possível gerar variações no momento.";
 const PARSE_RETRY_ERROR_MESSAGE = "Não foi possível gerar variações. Tente novamente.";
 const QUALITY_GATE_ERROR_MESSAGE =
-  "A IA gerou uma resposta curta demais. Tente novamente.";
+  "A IA não atingiu o padrão de qualidade esperado. Tente novamente.";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -102,6 +103,63 @@ const resolveNumberEnv = (name: string, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const normalizeLines = (content: string) =>
+  content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+const normalizeForMatch = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const bulletRegex = /^[-•*–—]/;
+
+const hasCtaLine = (line: string, cta?: string | null) => {
+  if (!cta) return true;
+  const normalizedLine = normalizeForMatch(line);
+  const normalizedCta = normalizeForMatch(cta);
+  return normalizedLine.includes(normalizedCta);
+};
+
+const hasExampleSignal = (content: string) => {
+  const normalized = normalizeForMatch(content);
+  const markers = [
+    "exemplo",
+    "por exemplo",
+    "na pratica",
+    "na prática",
+    "ex:",
+    "caso real",
+    "na vida real",
+  ];
+  if (markers.some((marker) => normalized.includes(marker))) {
+    return true;
+  }
+  return /\b\d{1,4}(%|x)?\b/.test(content);
+};
+
+const runWithConcurrency = async <TInput, TResult>(
+  items: TInput[],
+  limit: number,
+  task: (item: TInput, index: number) => Promise<TResult>
+) => {
+  const results: TResult[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) break;
+      results[index] = await task(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+};
+
 const persistBadJsonRaw = (raw: string) => {
   if (!isDev) return;
   try {
@@ -124,6 +182,15 @@ const logBadJson = (raw: string) => {
   persistBadJsonRaw(raw);
 };
 
+const logParseOk = (
+  result: { usedRepair: boolean; extractedBy?: "tags" | "object" | "raw" },
+  label?: string
+) => {
+  if (!isDev) return;
+  const by = result.extractedBy ? ` extractedBy=${result.extractedBy}` : "";
+  console.info(`[parse] ${label ?? "ok"} usedRepair=${result.usedRepair}${by}`);
+};
+
 const formatActionErrorMessage = (value: ReturnType<typeof toUserMessage>) => {
   const hintSuffix = value.hint ? ` ${value.hint}` : "";
   const base = `${value.message}${hintSuffix}`;
@@ -134,30 +201,44 @@ const formatActionErrorMessage = (value: ReturnType<typeof toUserMessage>) => {
   return `${base} (code=${value.code}${devDetails})`;
 };
 
-const parseJsonSafely = (raw: string) => {
-  const cleaned = cleanupResponseText(raw);
-
-  if (!cleaned) {
-    logBadJson(raw);
-    throw new VariantParseError("LLM_BAD_RESPONSE_PARSE", "Resposta vazia da IA.", raw);
+const parseJsonWithFixRetryOrThrow = async ({
+  rawText,
+  fixJson,
+  devLogLabel,
+}: {
+  rawText: string;
+  fixJson: (bad: string) => Promise<string>;
+  devLogLabel?: string;
+}) => {
+  const first = safeParseJsonFromLlm(rawText);
+  if (first.ok) {
+    logParseOk({ usedRepair: first.usedRepair, extractedBy: first.extractedBy }, devLogLabel);
+    return first.value;
   }
 
-  const parsed = safeParseJson<unknown>(cleaned);
   if (isDev) {
-    console.info(`[parse] usedRepair=${parsed.usedRepair}`);
-  }
-  if (!parsed.ok) {
-    logBadJson(raw);
-    throw new VariantParseError(
-      "LLM_BAD_RESPONSE_PARSE",
-      "Não foi possível interpretar o JSON retornado.",
-      raw,
-      parsed.reason,
-      buildSnippet(raw, PARSE_SNIPPET_LENGTH)
+    console.warn(
+      `[parse] ${devLogLabel ?? "parse"} failed, retrying FIX_JSON...`,
+      first.error
     );
   }
 
-  return parsed.value;
+  const fixedText = await fixJson(rawText);
+  const second = safeParseJsonFromLlm(fixedText);
+
+  if (second.ok) {
+    logParseOk({ usedRepair: second.usedRepair, extractedBy: second.extractedBy }, "ok-after-fix");
+    return second.value;
+  }
+
+  logBadJson(rawText);
+  throw new VariantParseError(
+    "LLM_BAD_RESPONSE_PARSE",
+    "Não foi possível interpretar o JSON retornado.",
+    rawText,
+    second.error ?? first.error,
+    second.extractedPreview ?? first.extractedPreview ?? buildSnippet(rawText, PARSE_SNIPPET_LENGTH)
+  );
 };
 
 const tryParseJson = (raw: string) => {
@@ -165,15 +246,20 @@ const tryParseJson = (raw: string) => {
   if (!cleaned) {
     return { ok: false as const, reason: "empty_response", cleaned };
   }
-  const parsed = safeParseJson<unknown>(cleaned);
+  const parsed = safeParseJsonFromLlm(cleaned);
   if (parsed.ok) {
-    return { ok: true as const, value: parsed.value, cleaned, usedRepair: parsed.usedRepair };
+    return {
+      ok: true as const,
+      value: parsed.value,
+      cleaned,
+      usedRepair: parsed.usedRepair,
+    };
   }
   return {
     ok: false as const,
-    reason: parsed.reason,
+    reason: parsed.error,
     cleaned,
-    usedRepair: parsed.usedRepair,
+    usedRepair: false,
   };
 };
 
@@ -484,9 +570,17 @@ const validateVariantsStrict = (
   return parsed;
 };
 
-const parseStrictVariants = (raw: string, platform: Platform) => {
+const parseStrictVariants = async (
+  raw: string,
+  platform: Platform,
+  fixJson: (bad: string) => Promise<string>
+) => {
   try {
-    const payload = parseJsonSafely(raw);
+    const payload = await parseJsonWithFixRetryOrThrow({
+      rawText: raw,
+      fixJson,
+      devLogLabel: "draft",
+    });
     const variants = extractVariants(payload, raw);
     return validateVariantsStrict(variants, platform, raw);
   } catch (error) {
@@ -498,8 +592,85 @@ const parseStrictVariants = (raw: string, platform: Platform) => {
 };
 
 const resolveCharRange = (platform: Platform) => PLATFORM_GUIDE[platform].charRange;
-const resolveLabelMin = (_label: string, platform: Platform) =>
-  Math.max(QUALITY_GATE_MIN_CHARS, resolveCharRange(platform).min);
+
+type QualityGateResult = { ok: true } | { ok: false; reason: string };
+
+const qualityGateDraft = (
+  variant: GenerateVariant,
+  platform: Platform,
+  cta?: string | null
+): QualityGateResult => {
+  const lines = normalizeLines(variant.content);
+  const { min } = resolveCharRange(platform);
+
+  if (!lines.length || lines[0].length <= 30) {
+    return { ok: false, reason: "missing_hook" };
+  }
+
+  const bulletCount = lines.filter((line) => bulletRegex.test(line)).length;
+  const shortPointCount = lines
+    .slice(1, -1)
+    .filter((line) => line.length <= 70).length;
+  if (bulletCount < 3 && shortPointCount < 3) {
+    return { ok: false, reason: "missing_bullets" };
+  }
+
+  if (lines.length < 6) {
+    return { ok: false, reason: "missing_signature" };
+  }
+
+  const lastLine = lines[lines.length - 1];
+  if (!hasCtaLine(lastLine, cta)) {
+    return { ok: false, reason: "missing_cta" };
+  }
+
+  if (variant.content.length < min) {
+    return { ok: false, reason: "too_short" };
+  }
+
+  return { ok: true };
+};
+
+const qualityGateFinal = (
+  variant: GenerateVariant,
+  platform: Platform,
+  cta?: string | null,
+  requireExample = false
+): QualityGateResult => {
+  const lines = normalizeLines(variant.content);
+  const { min, max } = resolveCharRange(platform);
+
+  if (!lines.length || lines[0].length <= 30) {
+    return { ok: false, reason: "missing_hook" };
+  }
+
+  const bulletCount = lines.filter((line) => bulletRegex.test(line)).length;
+  const shortPointCount = lines
+    .slice(1, -1)
+    .filter((line) => line.length <= 70).length;
+  if (bulletCount < 3 && shortPointCount < 3) {
+    return { ok: false, reason: "missing_bullets" };
+  }
+
+  const lastLine = lines[lines.length - 1];
+  if (!hasCtaLine(lastLine, cta)) {
+    return { ok: false, reason: "missing_cta" };
+  }
+
+  if (variant.content.length < min) {
+    return { ok: false, reason: "too_short" };
+  }
+
+  if (variant.content.length > max) {
+    return { ok: false, reason: "too_long" };
+  }
+
+  if (requireExample && !hasExampleSignal(variant.content)) {
+    return { ok: false, reason: "missing_example" };
+  }
+
+  return { ok: true };
+};
 
 const gatherResponseText = async (
   provider: LlmProvider,
@@ -507,32 +678,41 @@ const gatherResponseText = async (
   options?: LlmRequestOptions
 ): Promise<LlmResponse> => provider.generateText(prompt, options);
 
-const resolveBaseRequestOptions = (platform: Platform): LlmRequestOptions => {
-  const requestedCtx = LLM_NUM_CTX_DEFAULT;
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
+const resolveDraftRequestOptions = (): LlmRequestOptions => {
+  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", DRAFT_NUM_CTX_DEFAULT);
+  const temperature = resolveNumberEnv("OLLAMA_TEMPERATURE", DRAFT_TEMPERATURE_DEFAULT);
   return {
-    num_predict: resolveNumberEnv("OLLAMA_NUM_PREDICT", 900),
-    num_ctx: Math.min(requestedCtx, ctxLimit),
+    num_predict: DRAFT_NUM_PREDICT_DEFAULT,
+    num_ctx: Math.min(DRAFT_NUM_CTX_DEFAULT, ctxLimit),
+    temperature,
+    mode: "draft",
   };
 };
 
-const resolveExpandRequestOptions = (platform: Platform): LlmRequestOptions => {
-  const requestedCtx = LLM_NUM_CTX_DEFAULT;
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
+const resolveExpandRequestOptions = (): LlmRequestOptions => {
+  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", EXPAND_NUM_CTX_DEFAULT);
+  const temperature = resolveNumberEnv("OLLAMA_TEMPERATURE", EXPAND_TEMPERATURE_DEFAULT);
+  const numPredict = resolveNumberEnv(
+    "OLLAMA_EXPAND_NUM_PREDICT",
+    resolveNumberEnv("OLLAMA_NUM_PREDICT", EXPAND_NUM_PREDICT_DEFAULT)
+  );
   return {
-    num_predict: resolveNumberEnv("OLLAMA_EXPAND_NUM_PREDICT", 600),
-    num_ctx: Math.min(requestedCtx, ctxLimit),
+    num_predict: numPredict,
+    num_ctx: Math.min(EXPAND_NUM_CTX_DEFAULT, ctxLimit),
+    temperature,
     timeoutMs: resolveNumberEnv("OLLAMA_EXPAND_TIMEOUT_MS", 150000),
+    mode: "expand",
   };
 };
 
-const resolveContinuationRequestOptions = (platform: Platform): LlmRequestOptions => {
-  const requestedCtx = LLM_NUM_CTX_DEFAULT;
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", LLM_NUM_CTX_DEFAULT);
+const resolveFixJsonRequestOptions = (): LlmRequestOptions => {
+  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", FIX_JSON_NUM_CTX_DEFAULT);
+  const temperature = resolveNumberEnv("OLLAMA_FIX_JSON_TEMPERATURE", FIX_JSON_TEMPERATURE_DEFAULT);
+  const numPredict = resolveNumberEnv("OLLAMA_FIX_JSON_NUM_PREDICT", FIX_JSON_NUM_PREDICT_DEFAULT);
   return {
-    num_predict: resolveNumberEnv("OLLAMA_CONTINUE_NUM_PREDICT", 800),
-    num_ctx: Math.min(requestedCtx, ctxLimit),
-    timeoutMs: resolveNumberEnv("OLLAMA_CONTINUE_TIMEOUT_MS", 150000),
+    num_predict: numPredict,
+    num_ctx: Math.min(FIX_JSON_NUM_CTX_DEFAULT, ctxLimit),
+    temperature,
   };
 };
 const resolveErrorType = (
@@ -576,77 +756,41 @@ const logGenerateError = (errorType: string, error: unknown, raw?: string) => {
   console.error(`[generatePostsAction] erro ${errorType}:`, error);
 };
 
-const logVariantTiming = ({
+const logDraftTiming = ({
+  elapsedMs,
+  len,
+  doneReason,
+}: {
+  elapsedMs: number;
+  len: number;
+  doneReason?: string;
+}) => {
+  if (!isDev) return;
+  console.info(
+    `[draft] ok elapsedMs=${elapsedMs} len=${len} done_reason=${doneReason ?? "unknown"}`
+  );
+};
+
+const logExpandTiming = ({
   label,
   elapsedMs,
   len,
   doneReason,
-  continuation,
 }: {
   label: string;
   elapsedMs: number;
   len: number;
   doneReason?: string;
-  continuation: boolean;
 }) => {
   if (!isDev) return;
   console.info(
-    `[generatePostsAction] label=${label} elapsedMs=${elapsedMs} len=${len} done_reason=${doneReason ?? "unknown"} continuation=${continuation}`
+    `[expand] label=${label} ok elapsedMs=${elapsedMs} len=${len} done_reason=${doneReason ?? "unknown"}`
   );
 };
 
-const buildSubsetTemplate = (labels: string[]) => {
-  const items = labels
-    .map((label) => `{"label":"${label}","content_lines":["..."]}`)
-    .join(",\n    ");
-  return `{\n  "variants": [\n    ${items}\n  ]\n}`;
-};
-
-const buildExpandBatchPrompt = ({
-  theme,
-  platform,
-  briefing,
-  profile,
-  variants,
-}: {
-  theme: string;
-  platform: Platform;
-  briefing: BriefingRecord;
-  profile?: Awaited<ReturnType<typeof getUserProfile>> | null;
-  variants: GenerateVariant[];
-}) => {
-  const { min, max } = EXPAND_LINE_REQUIREMENTS[platform];
-  const profileLine = summarizeProfile(profile);
-  const briefingLine = summarizeBriefing(briefing);
-  const template = buildSubsetTemplate(variants.map((variant) => variant.label));
-  const variantBlock = variants
-    .map((variant) => `Label: ${variant.label}\nConteúdo atual:\n${variant.content}`)
-    .join("\n\n");
-  const minPerLabel = variants
-    .map((variant) => `${variant.label}: mínimo ${resolveLabelMin(variant.label, platform)} caracteres`)
-    .join(" | ");
-
-  return [
-    "EXPAND_VARIANTS",
-    "Expanda SOMENTE as variações abaixo.",
-    "Preserve o conteúdo atual e apenas adicione novas linhas/parágrafos ao final.",
-    `Aumente para pelo menos ${min} linhas (máximo ${max}) e respeite o mínimo de caracteres por label.`,
-    `Mínimos por label: ${minPerLabel}.`,
-    "LinkedIn: hook forte nas 2 primeiras linhas, corpo com 2-4 parágrafos curtos e CTA final.",
-    "Instagram: frases diretas, ritmo rápido, CTA para comentar ou salvar.",
-    `Contexto resumido: tema \"${theme}\". Plataforma ${platform}.`,
-    `Perfil: ${profileLine}.`,
-    `Briefing: ${briefingLine}.`,
-    "Retorne APENAS JSON válido com { \"variants\": [ { \"label\": \"...\", \"content_lines\": [\"...\"] } ] }.",
-    "Cada item de content_lines deve ser uma linha simples, sem \\n dentro.",
-    "Mantenha somente as labels enviadas, na mesma ordem.",
-    "Variações para expandir:",
-    variantBlock,
-    "Template de saída obrigatório:",
-    template,
-  ]
-    .filter(Boolean)
-    .join("\n");
+const logQualityFailure = (label: string, reason: string) => {
+  if (!isDev) return;
+  console.info(`[quality] label=${label} failReason=${reason}`);
 };
 
 const toBriefingInput = (briefing: BriefingRecord): BriefingInput => ({
@@ -659,19 +803,6 @@ const toBriefingInput = (briefing: BriefingRecord): BriefingInput => ({
   avoid: Array.isArray(briefing.avoid) ? briefing.avoid : [],
   cta: briefing.cta,
 });
-
-const summarizeProfile = (profile?: Awaited<ReturnType<typeof getUserProfile>> | null) => {
-  if (!profile) return "sem perfil salvo";
-  return [
-    profile.displayName,
-    profile.headline,
-    profile.role,
-    profile.writingStyleNotes,
-    profile.bannedClaims,
-  ]
-    .filter(Boolean)
-    .join(" | ");
-};
 
 const normalizeProfileForPrompt = (
   profile: NonNullable<Awaited<ReturnType<typeof getUserProfile>>>
@@ -688,20 +819,18 @@ const normalizeProfileForPrompt = (
   bannedClaims: profile.bannedClaims ?? undefined,
 });
 
-const summarizeBriefing = (briefing: BriefingRecord) =>
-  [
-    `objetivo: ${briefing.goal}`,
-    `oferta: ${briefing.offer}`,
-    `diferencial: ${briefing.differentiation}`,
-    `público: ${briefing.audience} (${briefing.audienceLevel})`,
-    `CTA: ${briefing.cta}`,
-  ]
-    .filter(Boolean)
-    .join(" | ");
-
-const parseSubsetVariants = (raw: string, expectedLabels: string[], platform: Platform) => {
+const parseSubsetVariants = async (
+  raw: string,
+  expectedLabels: string[],
+  platform: Platform,
+  fixJson: (bad: string) => Promise<string>
+) => {
   try {
-    const payload = parseJsonSafely(raw);
+    const payload = await parseJsonWithFixRetryOrThrow({
+      rawText: raw,
+      fixJson,
+      devLogLabel: "expand",
+    });
     const variants = extractVariants(payload, raw);
     if (!Array.isArray(variants)) {
       throw new VariantParseError(
@@ -767,14 +896,14 @@ const getShortWarnings = (
 ): { warnings: GenerateWarning[]; shortLabels: string[] } => {
   const warnings: GenerateWarning[] = [];
   const shortLabels: string[] = [];
+  const { min } = resolveCharRange(platform);
 
   variants.forEach((variant) => {
-    const minChars = resolveLabelMin(variant.label, platform);
-    if (variant.content.length >= minChars) return;
+    if (variant.content.length >= min) return;
     warnings.push({
       label: variant.label,
       reason: "TOO_SHORT",
-      minChars,
+      minChars: min,
       gotChars: variant.content.length,
     });
     shortLabels.push(variant.label);
@@ -788,246 +917,58 @@ const expandVariant = async ({
   variant,
   theme,
   platform,
+  platformContext,
   briefing,
   profile,
+  format,
+  directives,
   options,
+  fixJson,
 }: {
   provider: LlmProvider;
   variant: GenerateVariant;
   theme: string;
   platform: Platform;
-  briefing: BriefingRecord;
-  profile?: Awaited<ReturnType<typeof getUserProfile>> | null;
+  platformContext?: string;
+  briefing: BriefingInput;
+  profile?: ProfileRecord | null;
+  format: GeneratePostFormat;
+  directives: {
+    tone?: string;
+    structure?: string;
+    size?: string;
+    cta?: string;
+  };
   options?: LlmRequestOptions;
+  fixJson: (bad: string) => Promise<string>;
 }): Promise<GenerateVariant> => {
-  const expandPrompt = buildExpandBatchPrompt({
-    theme,
-    platform,
-    briefing,
+  const expandPrompt = buildExpandPrompt({
     profile,
-    variants: [variant],
+    platform,
+    platformContext,
+    briefing,
+    theme,
+    format,
+    directives,
+    variant,
   });
 
   const expandStart = Date.now();
   const rawExpand = await gatherResponseText(provider, expandPrompt, options);
-  const [expanded] = parseSubsetVariants(rawExpand.text, [variant.label], platform);
-  logVariantTiming({
+  const [expanded] = await parseSubsetVariants(
+    rawExpand.text,
+    [variant.label],
+    platform,
+    fixJson
+  );
+  logExpandTiming({
     label: variant.label,
     elapsedMs: Date.now() - expandStart,
     len: rawExpand.text.length,
     doneReason: rawExpand.doneReason,
-    continuation: false,
   });
 
   return expanded ?? variant;
-};
-
-const buildContinuationPrompt = (label: string, content: string) =>
-  [
-    "CONTINUE_VARIANT",
-    "Continue exatamente do ponto onde parou. Não reescreva. Não use JSON. Apenas continue o texto.",
-    `Label: ${label}`,
-    "Texto atual:",
-    content,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-const mergeContinuation = (current: string, continuation: string) => {
-  const base = current.trimEnd();
-  const extra = continuation.replace(/^\s+/, "");
-  if (!extra) return base;
-  const needsSpace =
-    base.length > 0 && !/\s$/.test(current) && !/^[,.;:!?]/.test(extra);
-  const separator = needsSpace ? " " : "";
-  return `${base}${separator}${extra}`.trim();
-};
-
-const continueVariant = async ({
-  provider,
-  label,
-  content,
-  options,
-}: {
-  provider: LlmProvider;
-  label: string;
-  content: string;
-  options?: LlmRequestOptions;
-}): Promise<string> => {
-  const prompt = buildContinuationPrompt(label, content);
-  const startedAt = Date.now();
-  const rawContinuation = await gatherResponseText(provider, prompt, options);
-  logVariantTiming({
-    label,
-    elapsedMs: Date.now() - startedAt,
-    len: rawContinuation.text.length,
-    doneReason: rawContinuation.doneReason,
-    continuation: true,
-  });
-  const continuationText = cleanupResponseText(rawContinuation.text);
-  if (!continuationText) {
-    throw new VariantParseError(
-      "LLM_BAD_RESPONSE_PARSE",
-      "Continuação vazia da IA.",
-      rawContinuation.text,
-      undefined,
-      undefined,
-      { label }
-    );
-  }
-  return continuationText;
-};
-
-const buildSingleVariantPrompt = ({
-  profile,
-  platform,
-  platformContext,
-  briefing,
-  theme,
-  format,
-  directives,
-  label,
-}: {
-  profile?: ProfileRecord | null;
-  platform: Platform;
-  platformContext?: string;
-  briefing: BriefingInput;
-  theme: string;
-  format: GeneratePostFormat;
-  directives: {
-    tone?: string;
-    structure?: string;
-    size?: string;
-    cta?: string;
-  };
-  label: string;
-}) =>
-  buildGeneratePrompt({
-    profile,
-    platform,
-    platformContext,
-    briefing,
-    theme,
-    format,
-    directives,
-    labels: [label],
-    template: buildSubsetTemplate([label]),
-    focusLabel: label,
-  });
-
-const ensureVariantErrorLabel = (error: unknown, label: string) => {
-  if (!(error instanceof VariantParseError)) return;
-  if (error.meta && typeof error.meta.label === "string") return;
-  error.meta = { ...(error.meta ?? {}), label };
-};
-
-const generateVariantOnce = async ({
-  provider,
-  label,
-  theme,
-  platform,
-  platformContext,
-  briefing,
-  profile,
-  format,
-  directives,
-  options,
-}: {
-  provider: LlmProvider;
-  label: string;
-  theme: string;
-  platform: Platform;
-  platformContext?: string;
-  briefing: BriefingInput;
-  profile?: ProfileRecord | null;
-  format: GeneratePostFormat;
-  directives: {
-    tone?: string;
-    structure?: string;
-    size?: string;
-    cta?: string;
-  };
-  options?: LlmRequestOptions;
-}): Promise<GenerateVariant> => {
-  const prompt = buildSingleVariantPrompt({
-    profile,
-    platform,
-    platformContext,
-    briefing,
-    theme,
-    format,
-    directives,
-    label,
-  });
-  const startedAt = Date.now();
-  const rawResponse = await gatherResponseText(provider, prompt, options);
-  const variant = parseSingleVariant(rawResponse.text, label, platform);
-  logVariantTiming({
-    label,
-    elapsedMs: Date.now() - startedAt,
-    len: rawResponse.text.length,
-    doneReason: rawResponse.doneReason,
-    continuation: false,
-  });
-  const minChars = resolveLabelMin(label, platform);
-
-  if (rawResponse.doneReason === "length") {
-    if (variant.content.length >= minChars) {
-      if (isDev) {
-        console.warn(
-          `[generatePostsAction] done_reason=length label=${label} len=${variant.content.length}`
-        );
-      }
-      return variant;
-    }
-
-    const continuationOptions = resolveContinuationRequestOptions(platform);
-    const continuationText = await continueVariant({
-      provider,
-      label,
-      content: variant.content,
-      options: continuationOptions,
-    });
-    const mergedContent = mergeContinuation(variant.content, continuationText);
-    if (mergedContent.length < minChars) {
-      throw new VariantParseError(
-        "LLM_QUALITY_GATE",
-        `Resposta curta após continuação para "${label}".`,
-        undefined,
-        undefined,
-        undefined,
-        { label, minChars, gotChars: mergedContent.length }
-      );
-    }
-    return { label, content: mergedContent };
-  }
-
-  return variant;
-};
-
-const generateVariantWithRetry = async (
-  args: Parameters<typeof generateVariantOnce>[0],
-  maxAttempts = 2
-) => {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      return await generateVariantOnce(args);
-    } catch (error) {
-      ensureVariantErrorLabel(error, args.label);
-      lastError = error;
-      if (error instanceof VariantParseError && error.code === "LLM_QUALITY_GATE") {
-        break;
-      }
-      if (attempt >= maxAttempts) break;
-      if (isDev) {
-        console.warn(
-          `[generatePostsAction] retry label=${args.label} attempt=${attempt + 1}`
-        );
-      }
-    }
-  }
-  throw lastError;
 };
 
 export async function generatePostsAction(input: {
@@ -1098,54 +1039,117 @@ export async function generatePostsAction(input: {
     size: `${platformMin}-${max} caracteres`,
     cta: briefing.cta,
   };
-  const baseOptions = resolveBaseRequestOptions(platform);
-  const expandOptions = resolveExpandRequestOptions(platform);
+  const draftOptions = resolveDraftRequestOptions();
+  const expandOptions = resolveExpandRequestOptions();
+  const fixJsonOptions = resolveFixJsonRequestOptions();
+  const fixJson = async (badOutput: string) => {
+    const fixPrompt = buildFixJsonPrompt(badOutput);
+    const fixed = await gatherResponseText(provider, fixPrompt, fixJsonOptions);
+    return fixed.text;
+  };
 
   try {
-    const variants: GenerateVariant[] = [];
+    const totalStart = Date.now();
+    const draftPrompt = buildDraftPrompt({
+      profile: promptProfile,
+      platform,
+      platformContext,
+      briefing: briefingInput,
+      theme: trimmedTheme,
+      format: input.format,
+      directives,
+    });
 
-    for (const label of EXPECTED_VARIANT_LABELS) {
-      const variant = await generateVariantWithRetry({
-        provider,
-        label,
-        theme: trimmedTheme,
-        platform,
-        platformContext,
-        briefing: briefingInput,
-        profile: promptProfile,
-        format: input.format,
-        directives,
-        options: baseOptions,
-      });
+    const draftStart = Date.now();
+    const rawDraft = await gatherResponseText(provider, draftPrompt, draftOptions);
+    logDraftTiming({
+      elapsedMs: Date.now() - draftStart,
+      len: rawDraft.text.length,
+      doneReason: rawDraft.doneReason,
+    });
+    const draftVariants = await parseStrictVariants(rawDraft.text, platform, fixJson);
 
-      const minChars = resolveLabelMin(label, platform);
-      if (variant.content.length < minChars) {
-        try {
-          const expanded = await expandVariant({
+    const labelsToExpand: string[] = [];
+    draftVariants.forEach((variant) => {
+      const gate = qualityGateDraft(variant, platform, briefing.cta);
+      if (gate.ok) return;
+      logQualityFailure(variant.label, gate.reason);
+      labelsToExpand.push(variant.label);
+    });
+
+    const labelsToExpandSet = new Set(labelsToExpand);
+    const expandTargets = draftVariants.filter((variant) =>
+      labelsToExpandSet.has(variant.label)
+    );
+
+    let expandedVariants: GenerateVariant[] = [];
+    if (expandTargets.length) {
+      expandedVariants = await runWithConcurrency(
+        expandTargets,
+        2,
+        async (variant) =>
+          expandVariant({
             provider,
             variant,
             theme: trimmedTheme,
             platform,
-            briefing,
-            profile,
+            platformContext,
+            briefing: briefingInput,
+            profile: promptProfile,
+            format: input.format,
+            directives,
             options: expandOptions,
-          });
-          variants.push(expanded);
-          continue;
-        } catch (error) {
-          ensureVariantErrorLabel(error, label);
-          const raw = error instanceof VariantParseError ? error.raw : undefined;
-          logGenerateError("expand", error, raw);
-        }
-      }
-
-      variants.push(variant);
+            fixJson,
+          })
+      );
     }
 
-    const { warnings } = getShortWarnings(variants, platform);
+    const expandedMap = new Map(
+      expandedVariants.map((variant) => [variant.label, variant])
+    );
+    const expandedSet = new Set(expandedVariants.map((variant) => variant.label));
+    const finalVariants = draftVariants.map(
+      (variant) => expandedMap.get(variant.label) ?? variant
+    );
+
+    let finalFailure: { label: string; reason: string } | null = null;
+    for (const variant of finalVariants) {
+      const gate = qualityGateFinal(
+        variant,
+        platform,
+        briefing.cta,
+        expandedSet.has(variant.label)
+      );
+      if (gate.ok) continue;
+      logQualityFailure(variant.label, gate.reason);
+      if (!finalFailure) {
+        finalFailure = { label: variant.label, reason: gate.reason };
+      }
+    }
+
+    if (finalFailure !== null) {
+      throw new VariantParseError(
+        "LLM_QUALITY_GATE",
+        QUALITY_GATE_ERROR_MESSAGE,
+        undefined,
+        finalFailure.reason,
+        undefined,
+        finalFailure
+      );
+    }
+
+    if (isDev) {
+      const totalMs = Date.now() - totalStart;
+      const expandCount = expandedVariants.length;
+      console.info(
+        `[generate] ok totalMs=${totalMs} expanded=${expandCount}`
+      );
+    }
+
+    const { warnings } = getShortWarnings(finalVariants, platform);
     return {
       ok: true,
-      variants,
+      variants: finalVariants,
       warnings: warnings.length ? warnings : undefined,
     };
   } catch (error) {
@@ -1256,6 +1260,9 @@ export async function expandShortVariantsAction(input: {
 
   const platformInput = input.platform ?? process.env.DEFAULT_PLATFORM;
   const platform = isPlatform(platformInput) ? platformInput : "LINKEDIN";
+  const platformContext = isPlatform(platformInput)
+    ? platform
+    : "LINKEDIN (default; TODO: enviar plataforma no form)";
   let profile: Awaited<ReturnType<typeof getUserProfile>> | null = null;
 
   try {
@@ -1273,14 +1280,32 @@ export async function expandShortVariantsAction(input: {
   }
 
   const provider = getLlmProvider();
-  const expandOptions = resolveExpandRequestOptions(platform);
+  const expandOptions = resolveExpandRequestOptions();
+  const fixJsonOptions = resolveFixJsonRequestOptions();
+  const fixJson = async (badOutput: string) => {
+    const fixPrompt = buildFixJsonPrompt(badOutput);
+    const fixed = await gatherResponseText(provider, fixPrompt, fixJsonOptions);
+    return fixed.text;
+  };
+  const promptProfile = profile ? normalizeProfileForPrompt(profile) : null;
+  const briefingInput = toBriefingInput(briefing);
+  const { max, min: platformMin } = resolveCharRange(platform);
+  const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
+  const directives = {
+    tone,
+    structure: "começo/meio/fim com parágrafos coesos",
+    size: `${platformMin}-${max} caracteres`,
+    cta: briefing.cta,
+  };
   const requestedLabels =
     Array.isArray(input.labels) && input.labels.length
       ? input.labels.filter((label): label is string => typeof label === "string")
       : null;
 
-  const { shortLabels } = getShortWarnings(baseVariants, platform);
-  const labelSet = new Set(requestedLabels ?? shortLabels);
+  const failingLabels = baseVariants
+    .filter((variant) => !qualityGateDraft(variant, platform, briefing.cta).ok)
+    .map((variant) => variant.label);
+  const labelSet = new Set(requestedLabels ?? failingLabels);
   const labelsToExpand = EXPECTED_VARIANT_LABELS.filter((label) => labelSet.has(label));
   const labelsToExpandSet = new Set<string>(labelsToExpand);
 
@@ -1305,9 +1330,13 @@ export async function expandShortVariantsAction(input: {
         variant,
         theme: trimmedTheme,
         platform,
-        briefing,
-        profile,
+        platformContext,
+        briefing: briefingInput,
+        profile: promptProfile,
+        format: input.format,
+        directives,
         options: expandOptions,
+        fixJson,
       });
       expandedVariants.push(expanded);
     }
