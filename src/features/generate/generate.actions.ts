@@ -96,12 +96,6 @@ const buildSnippet = (raw: string, limit: number) => {
   return `${normalized.slice(0, limit)}...`;
 };
 
-const resolveNumberEnv = (name: string, fallback: number) => {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
 
 const normalizeLines = (content: string) =>
   content
@@ -165,7 +159,7 @@ const persistBadJsonRaw = (raw: string) => {
   try {
     const dir = path.join(process.cwd(), ".tmp");
     fs.mkdirSync(dir, { recursive: true });
-    const filename = `ollama_raw_bad_json_${Date.now()}.txt`;
+    const filename = `llm_raw_bad_json_${Date.now()}.txt`;
     fs.writeFileSync(path.join(dir, filename), raw, "utf8");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -679,8 +673,8 @@ const gatherResponseText = async (
 ): Promise<LlmResponse> => provider.generateText(prompt, options);
 
 const resolveDraftRequestOptions = (): LlmRequestOptions => {
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", DRAFT_NUM_CTX_DEFAULT);
-  const temperature = resolveNumberEnv("OLLAMA_TEMPERATURE", DRAFT_TEMPERATURE_DEFAULT);
+  const ctxLimit = DRAFT_NUM_CTX_DEFAULT;
+  const temperature = DRAFT_TEMPERATURE_DEFAULT;
   return {
     num_predict: DRAFT_NUM_PREDICT_DEFAULT,
     num_ctx: Math.min(DRAFT_NUM_CTX_DEFAULT, ctxLimit),
@@ -690,25 +684,22 @@ const resolveDraftRequestOptions = (): LlmRequestOptions => {
 };
 
 const resolveExpandRequestOptions = (): LlmRequestOptions => {
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", EXPAND_NUM_CTX_DEFAULT);
-  const temperature = resolveNumberEnv("OLLAMA_TEMPERATURE", EXPAND_TEMPERATURE_DEFAULT);
-  const numPredict = resolveNumberEnv(
-    "OLLAMA_EXPAND_NUM_PREDICT",
-    resolveNumberEnv("OLLAMA_NUM_PREDICT", EXPAND_NUM_PREDICT_DEFAULT)
-  );
+  const ctxLimit = EXPAND_NUM_CTX_DEFAULT;
+  const temperature = EXPAND_TEMPERATURE_DEFAULT;
+  const numPredict = EXPAND_NUM_PREDICT_DEFAULT;
   return {
     num_predict: numPredict,
     num_ctx: Math.min(EXPAND_NUM_CTX_DEFAULT, ctxLimit),
     temperature,
-    timeoutMs: resolveNumberEnv("OLLAMA_EXPAND_TIMEOUT_MS", 150000),
+    timeoutMs: 150000,
     mode: "expand",
   };
 };
 
 const resolveFixJsonRequestOptions = (): LlmRequestOptions => {
-  const ctxLimit = resolveNumberEnv("OLLAMA_NUM_CTX", FIX_JSON_NUM_CTX_DEFAULT);
-  const temperature = resolveNumberEnv("OLLAMA_FIX_JSON_TEMPERATURE", FIX_JSON_TEMPERATURE_DEFAULT);
-  const numPredict = resolveNumberEnv("OLLAMA_FIX_JSON_NUM_PREDICT", FIX_JSON_NUM_PREDICT_DEFAULT);
+  const ctxLimit = FIX_JSON_NUM_CTX_DEFAULT;
+  const temperature = FIX_JSON_TEMPERATURE_DEFAULT;
+  const numPredict = FIX_JSON_NUM_PREDICT_DEFAULT;
   return {
     num_predict: numPredict,
     num_ctx: Math.min(FIX_JSON_NUM_CTX_DEFAULT, ctxLimit),
@@ -733,8 +724,8 @@ const resolveErrorType = (
       return "timeout";
     }
     if (
-      error.message.includes("Ollama respondeu com status") ||
-      error.message.includes("Não foi possível conectar ao Ollama")
+      error.message.includes("Gemini respondeu com status") ||
+      error.message.includes("Não foi possível conectar ao Gemini")
     ) {
       return "http";
     }
