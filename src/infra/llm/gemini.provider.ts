@@ -133,12 +133,11 @@ export class GeminiProvider implements LlmProvider {
       requestOptions?.timeoutMs ??
       resolveNumberEnv("GEMINI_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
 
-    const generationConfig = {
-      temperature: requestOptions?.temperature ?? DEFAULT_TEMPERATURE,
-      topP: requestOptions?.topP ?? requestOptions?.top_p ?? DEFAULT_TOP_P,
-      maxOutputTokens:
-        requestOptions?.maxTokens ?? requestOptions?.num_predict ?? DEFAULT_MAX_OUTPUT_TOKENS,
-    };
+    const temperature = requestOptions?.temperature ?? DEFAULT_TEMPERATURE;
+    const topP = requestOptions?.topP ?? requestOptions?.top_p ?? DEFAULT_TOP_P;
+    const maxOutputTokens =
+      requestOptions?.maxTokens ?? requestOptions?.num_predict ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const generationConfig = { temperature, topP, maxOutputTokens };
 
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY ausente. Configure o provider Gemini.");
@@ -193,7 +192,7 @@ export class GeminiProvider implements LlmProvider {
         }
         throw toHttpError(
           status,
-          { elapsedMs, baseUrl, model },
+          { elapsedMs, baseUrl, model, maxOutputTokens },
           bodyText ? bodyText.slice(0, 500) : undefined,
           apiMessage
         );

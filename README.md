@@ -29,6 +29,39 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Gemini validation
+
+Export the API key in your shell (do not commit it):
+
+```bash
+export GEMINI_API_KEY="SUA_CHAVE_AQUI"
+```
+
+Using curl with the query param (same as the provider):
+
+```bash
+curl -sS \
+  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-1.5-flash}:generateContent?key=${GEMINI_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Diga ola em uma frase curta."}]}]}'
+```
+
+Using curl with the `x-goog-api-key` header:
+
+```bash
+curl -sS \
+  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-1.5-flash}:generateContent" \
+  -H "Content-Type: application/json" \
+  -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+  -d '{"contents":[{"role":"user","parts":[{"text":"Diga ola em uma frase curta."}]}]}'
+```
+
+Internal smoke test:
+
+```bash
+node scripts/validate-gemini.mjs
+```
+
 ## Deploy on Vercel
 
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
