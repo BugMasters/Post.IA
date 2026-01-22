@@ -1,6 +1,6 @@
 import type { LlmProvider, LlmRequestOptions, LlmResponse } from "./provider";
 
-const DEFAULT_MODEL = "gemini-1.5-flash-latest";
+const DEFAULT_MODEL = "gemini-2.0-flash-001";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 const DEFAULT_TIMEOUT_MS = 120000;
 const DEFAULT_TEMPERATURE = 0.7;

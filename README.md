@@ -45,11 +45,19 @@ curl -sS \
   | jq -r '.models[]? | select(.supportedGenerationMethods | index("generateContent")) | .name'
 ```
 
+Se der 404, rode ListModels e ajuste GEMINI_MODEL.
+
+Comando ListModels usado no smoke test:
+
+```bash
+curl -sS "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models?key=${GEMINI_API_KEY}"
+```
+
 Using curl with the query param (same as the provider):
 
 ```bash
 curl -sS \
-  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-1.5-flash}:generateContent?key=${GEMINI_API_KEY}" \
+  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-2.0-flash-001}:generateContent?key=${GEMINI_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"role":"user","parts":[{"text":"Diga ola em uma frase curta."}]}]}'
 ```
@@ -58,7 +66,7 @@ Using curl with the `x-goog-api-key` header:
 
 ```bash
 curl -sS \
-  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-1.5-flash}:generateContent" \
+  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models/${GEMINI_MODEL:-gemini-2.0-flash-001}:generateContent" \
   -H "Content-Type: application/json" \
   -H "x-goog-api-key: ${GEMINI_API_KEY}" \
   -d '{"contents":[{"role":"user","parts":[{"text":"Diga ola em uma frase curta."}]}]}'
