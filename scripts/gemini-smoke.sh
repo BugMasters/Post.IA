@@ -3,6 +3,17 @@ set -euo pipefail
 
 echo "== Post.IA | Gemini smoke check =="
 
+## .env fallback (model/base url only)
+# Se GEMINI_MODEL nao estiver no ambiente, tenta ler do .env (sem expor GEMINI_API_KEY)
+if [ -z "${GEMINI_MODEL:-}" ] && [ -f ".env" ]; then
+  _m=$(grep -E '^GEMINI_MODEL=' .env | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+  if [ -n "${_m:-}" ]; then export GEMINI_MODEL="$_m"; fi
+fi
+if [ -z "${GEMINI_BASE_URL:-}" ] && [ -f ".env" ]; then
+  _b=$(grep -E '^GEMINI_BASE_URL=' .env | tail -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+  if [ -n "${_b:-}" ]; then export GEMINI_BASE_URL="$_b"; fi
+fi
+
 if [ -z "${GEMINI_API_KEY:-}" ] || [ "${#GEMINI_API_KEY}" -le 10 ]; then
   echo "ERRO: GEMINI_API_KEY ausente ou curta demais."
   echo "Defina via:"

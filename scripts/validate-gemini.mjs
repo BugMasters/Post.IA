@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "gemini-1.5-flash";
+const DEFAULT_MODEL = "gemini-flash-latest";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
 const prompt = "Diga olá em uma frase curta.";
