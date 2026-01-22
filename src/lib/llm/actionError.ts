@@ -13,7 +13,7 @@ const DEFAULT_MESSAGE = "A IA retornou um erro. Tente novamente.";
 
 const MESSAGE_BY_CODE: Record<string, string> = {
   LLM_TIMEOUT: "A IA demorou demais para responder. Tente novamente.",
-  LLM_UNAVAILABLE: "Não consegui conectar na IA (Ollama). Verifique se está ligado.",
+  LLM_UNAVAILABLE: "Não consegui conectar na IA. Verifique a configuração do provider.",
   LLM_HTTP_ERROR: "A IA retornou um erro. Tente novamente.",
   LLM_BAD_RESPONSE: "A IA retornou um formato inválido. Tente novamente.",
   LLM_BAD_RESPONSE_PARSE: "A IA retornou um formato inválido. Tente novamente.",
@@ -63,7 +63,7 @@ const resolveCodeFromError = (error: Error) => {
     return "LLM_TIMEOUT";
   }
   if (
-    message.includes("não foi possível conectar ao ollama") ||
+    message.includes("não foi possível conectar") ||
     message.includes("fetch failed") ||
     message.includes("econnrefused") ||
     message.includes("enotfound") ||
