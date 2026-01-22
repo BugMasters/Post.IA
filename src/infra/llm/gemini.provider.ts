@@ -1,6 +1,6 @@
 import type { LlmProvider, LlmRequestOptions, LlmResponse } from "./provider";
 
-const DEFAULT_MODEL = "gemini-1.5-flash";
+const DEFAULT_MODEL = "gemini-1.5-flash-latest";
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 const DEFAULT_TIMEOUT_MS = 120000;
 const DEFAULT_TEMPERATURE = 0.7;
@@ -94,6 +94,9 @@ const toHttpError = (
     message = "Chave GEMINI_API_KEY inválida ou ausente.";
   } else if (status === 403) {
     message = "Sem permissão para usar o Gemini. Verifique sua conta/projeto.";
+  } else if (status === 404) {
+    message =
+      "Modelo não encontrado/sem suporte. Rode ListModels (v1beta/models) para ver modelos e métodos suportados.";
   } else if (status === 429) {
     message = "Limite de requisições do Gemini excedido. Tente novamente mais tarde.";
   } else if (status >= 500) {
@@ -127,7 +130,7 @@ const toEmptyResponseError = (meta: Record<string, unknown>) =>
 export class GeminiProvider implements LlmProvider {
   async generateText(prompt: string, requestOptions?: LlmRequestOptions): Promise<LlmResponse> {
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
+    const rawModel = process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
     const baseUrl = process.env.GEMINI_BASE_URL ?? DEFAULT_BASE_URL;
     const timeoutMs =
       requestOptions?.timeoutMs ??
@@ -151,6 +154,7 @@ export class GeminiProvider implements LlmProvider {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
+    const model = rawModel.replace(/^models\//, "");
     const apiUrl = buildApiUrl(baseUrl, model, apiKey);
 
     try {

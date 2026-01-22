@@ -11,15 +11,37 @@ if [ -z "${GEMINI_API_KEY:-}" ] || [ "${#GEMINI_API_KEY}" -le 10 ]; then
   exit 1
 fi
 
-export GEMINI_MODEL="${GEMINI_MODEL:-gemini-1.5-flash}"
+USER_GEMINI_MODEL="${GEMINI_MODEL:-}"
 export GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}"
 
-echo "Model:    $GEMINI_MODEL"
+echo "Model:    ${USER_GEMINI_MODEL:-auto}"
 echo "Base URL: $GEMINI_BASE_URL"
 
 echo
+echo "== ListModels (sem imprimir key) =="
+MODELS_JSON="$(curl -sS "${GEMINI_BASE_URL%/}/v1beta/models?key=${GEMINI_API_KEY}")"
+DETECTED_MODEL="$(
+  echo "$MODELS_JSON" | jq -r \
+    '.models[]? | select(.supportedGenerationMethods | index("generateContent")) | .name' \
+    | head -n 1
+)"
+DETECTED_MODEL="${DETECTED_MODEL#models/}"
+
+if [ -z "${USER_GEMINI_MODEL}" ]; then
+  if [ -z "$DETECTED_MODEL" ]; then
+    echo "ERRO: Nenhum modelo com generateContent encontrado via ListModels."
+    exit 1
+  fi
+  export GEMINI_MODEL="$DETECTED_MODEL"
+else
+  export GEMINI_MODEL="$USER_GEMINI_MODEL"
+fi
+
+echo "Model efetivo: $GEMINI_MODEL"
+
+echo
 echo "== CURL smoke test (sem imprimir key) =="
-OUT_FILE="/tmp/gemini_out.json"
+OUT_FILE="scripts/gemini_out.json"
 CURL_URL="${GEMINI_BASE_URL%/}/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}"
 
 HTTP_STATUS="$(curl -sS -o "$OUT_FILE" -w "%{http_code}" \
@@ -29,6 +51,9 @@ HTTP_STATUS="$(curl -sS -o "$OUT_FILE" -w "%{http_code}" \
 )"
 
 echo "HTTP status: $HTTP_STATUS"
+if [ "$HTTP_STATUS" = "404" ] && [ -n "$USER_GEMINI_MODEL" ]; then
+  echo "Modelo inválido. Rode ListModels e ajuste GEMINI_MODEL"
+fi
 echo "Body (primeiros 300 chars):"
 head -c 300 "$OUT_FILE" || true
 echo

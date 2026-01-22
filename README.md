@@ -37,6 +37,14 @@ Export the API key in your shell (do not commit it):
 export GEMINI_API_KEY="SUA_CHAVE_AQUI"
 ```
 
+Como descobrir GEMINI_MODEL via ListModels:
+
+```bash
+curl -sS \
+  "${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}/v1beta/models?key=${GEMINI_API_KEY}" \
+  | jq -r '.models[]? | select(.supportedGenerationMethods | index("generateContent")) | .name'
+```
+
 Using curl with the query param (same as the provider):
 
 ```bash
