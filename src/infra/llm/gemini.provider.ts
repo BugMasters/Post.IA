@@ -6,6 +6,10 @@ const DEFAULT_TIMEOUT_MS = 120000;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_TOP_P = 0.9;
 const DEFAULT_MAX_OUTPUT_TOKENS = 800;
+const RETRY_BASE_MS = 800;
+const RETRY_MAX_MS = 8000;
+const RETRY_ATTEMPTS = 4;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const isDev = process.env.NODE_ENV !== "production";
 
 const resolveNumberEnv = (name: string, fallback: number) => {
@@ -127,6 +131,20 @@ const toEmptyResponseError = (meta: Record<string, unknown>) =>
     { kind: "empty_response", meta }
   );
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const resolveRetryDelayMs = (attempt: number, retryAfter?: string | null) => {
+  if (retryAfter) {
+    const parsed = Number(retryAfter);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.round(parsed * 1000);
+    }
+  }
+  const backoff = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
+  const jittered = backoff * (0.5 + Math.random());
+  return Math.min(RETRY_MAX_MS, Math.round(jittered));
+};
+
 export class GeminiProvider implements LlmProvider {
   async generateText(prompt: string, requestOptions?: LlmRequestOptions): Promise<LlmResponse> {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -151,39 +169,64 @@ export class GeminiProvider implements LlmProvider {
       generationConfig,
     };
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const startedAt = Date.now();
     const model = rawModel.replace(/^models\//, "");
     const apiUrl = buildApiUrl(baseUrl, model, apiKey);
 
-    try {
-      let response: Response;
+    let response: Response | undefined;
+    let elapsedMs = 0;
+    for (let attempt = 1; attempt <= RETRY_ATTEMPTS; attempt += 1) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        const attemptStartedAt = Date.now();
 
-      try {
-        response = await fetch(apiUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
-      } catch (error) {
-        const elapsedMs = Date.now() - startedAt;
-        if (error instanceof Error && error.name === "AbortError") {
-          throw toTimeoutError({ elapsedMs, timeoutMs });
-        }
-        if (isNetworkError(error)) {
-          throw toNetworkError(error instanceof Error ? error.message : undefined, {
-            elapsedMs,
-            baseUrl,
+        try {
+          response = await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal,
           });
+        } catch (error) {
+          elapsedMs = Date.now() - attemptStartedAt;
+          if (isDev) {
+            const statusLabel =
+              error instanceof Error && error.name === "AbortError" ? "timeout" : "network";
+            console.info(
+              `[gemini] status=${statusLabel} elapsedMs=${elapsedMs} model=${model} attempt=${attempt} maxOutputTokens=${maxOutputTokens}`
+            );
+          }
+          if (error instanceof Error && error.name === "AbortError") {
+            throw toTimeoutError({ elapsedMs, timeoutMs });
+          }
+          if (isNetworkError(error)) {
+            throw toNetworkError(error instanceof Error ? error.message : undefined, {
+              elapsedMs,
+              baseUrl,
+            });
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
         }
-        throw error;
-      }
 
-      const elapsedMs = Date.now() - startedAt;
-      if (!response.ok) {
-        const status = response.status;
+        elapsedMs = Date.now() - attemptStartedAt;
+        if (isDev) {
+          console.info(
+            `[gemini] status=${response.status} elapsedMs=${elapsedMs} model=${model} attempt=${attempt} maxOutputTokens=${maxOutputTokens}`
+          );
+        }
+
+        if (response.ok) {
+          break;
+        }
+
+        if (RETRYABLE_STATUS.has(response.status) && attempt < RETRY_ATTEMPTS) {
+          const retryAfter = response.headers.get("retry-after");
+          const delayMs = resolveRetryDelayMs(attempt, retryAfter);
+          await sleep(delayMs);
+          continue;
+        }
+
         const bodyText = await response.text();
         let apiMessage: string | undefined;
         if (bodyText) {
@@ -195,11 +238,15 @@ export class GeminiProvider implements LlmProvider {
           }
         }
         throw toHttpError(
-          status,
+          response.status,
           { elapsedMs, baseUrl, model, maxOutputTokens },
           bodyText ? bodyText.slice(0, 500) : undefined,
           apiMessage
         );
+      }
+
+      if (!response) {
+        throw toNetworkError(undefined, { baseUrl, model, maxOutputTokens });
       }
 
       let payload: GeminiResponse;
@@ -218,23 +265,9 @@ export class GeminiProvider implements LlmProvider {
         throw toEmptyResponseError({ elapsedMs, model });
       }
 
-      if (isDev) {
-        const tokens =
-          payload.usageMetadata?.totalTokenCount ??
-          payload.usageMetadata?.candidatesTokenCount ??
-          payload.usageMetadata?.promptTokenCount;
-        const tokenLabel = typeof tokens === "number" ? tokens : "n/a";
-        console.info(
-          `[gemini] ok elapsedMs=${elapsedMs} model=${model} tokens=${tokenLabel}`
-        );
-      }
-
-      return {
-        text,
-        doneReason: candidate?.finishReason,
-      };
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    return {
+      text,
+      doneReason: candidate?.finishReason,
+    };
   }
 }

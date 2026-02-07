@@ -22,15 +22,16 @@ export type { GeneratePostFormat } from "./types";
 
 type BriefingRecord = NonNullable<Awaited<ReturnType<typeof getLatestBriefingForUser>>>;
 
-const DRAFT_NUM_PREDICT_DEFAULT = 280;
+const DRAFT_MAX_OUTPUT_TOKENS_DEFAULT = 250;
 const DRAFT_NUM_CTX_DEFAULT = 2048;
 const DRAFT_TEMPERATURE_DEFAULT = 0.6;
-const EXPAND_NUM_PREDICT_DEFAULT = 800;
+const EXPAND_MAX_OUTPUT_TOKENS_DEFAULT = 450;
 const EXPAND_NUM_CTX_DEFAULT = 4096;
 const EXPAND_TEMPERATURE_DEFAULT = 0.7;
-const FIX_JSON_NUM_PREDICT_DEFAULT = 500;
+const FIX_JSON_MAX_OUTPUT_TOKENS_DEFAULT = 300;
 const FIX_JSON_NUM_CTX_DEFAULT = 1024;
 const FIX_JSON_TEMPERATURE_DEFAULT = 0.2;
+const EXPAND_CONCURRENCY_DEFAULT = 1;
 const TRUNCATION_LINE_MIN: Record<Platform, number> = {
   LINKEDIN: 4,
   INSTAGRAM: 3,
@@ -683,11 +684,10 @@ const resolveDraftRequestOptions = (): LlmRequestOptions => {
   const temperature = resolveNumberEnv("GEMINI_DRAFT_TEMPERATURE", DRAFT_TEMPERATURE_DEFAULT);
   const maxTokens = resolveNumberEnv(
     "GEMINI_DRAFT_MAX_OUTPUT_TOKENS",
-    DRAFT_NUM_PREDICT_DEFAULT
+    DRAFT_MAX_OUTPUT_TOKENS_DEFAULT
   );
   return {
     maxTokens,
-    num_predict: maxTokens,
     num_ctx: Math.min(DRAFT_NUM_CTX_DEFAULT, ctxLimit),
     temperature,
     mode: "draft",
@@ -699,11 +699,10 @@ const resolveExpandRequestOptions = (): LlmRequestOptions => {
   const temperature = resolveNumberEnv("GEMINI_EXPAND_TEMPERATURE", EXPAND_TEMPERATURE_DEFAULT);
   const maxTokens = resolveNumberEnv(
     "GEMINI_EXPAND_MAX_OUTPUT_TOKENS",
-    resolveNumberEnv("GEMINI_MAX_OUTPUT_TOKENS", EXPAND_NUM_PREDICT_DEFAULT)
+    resolveNumberEnv("GEMINI_MAX_OUTPUT_TOKENS", EXPAND_MAX_OUTPUT_TOKENS_DEFAULT)
   );
   return {
     maxTokens,
-    num_predict: maxTokens,
     num_ctx: Math.min(EXPAND_NUM_CTX_DEFAULT, ctxLimit),
     temperature,
     timeoutMs: resolveNumberEnv("GEMINI_EXPAND_TIMEOUT_MS", 150000),
@@ -719,11 +718,10 @@ const resolveFixJsonRequestOptions = (): LlmRequestOptions => {
   );
   const maxTokens = resolveNumberEnv(
     "GEMINI_FIX_JSON_MAX_OUTPUT_TOKENS",
-    FIX_JSON_NUM_PREDICT_DEFAULT
+    FIX_JSON_MAX_OUTPUT_TOKENS_DEFAULT
   );
   return {
     maxTokens,
-    num_predict: maxTokens,
     num_ctx: Math.min(FIX_JSON_NUM_CTX_DEFAULT, ctxLimit),
     temperature,
   };
@@ -1096,9 +1094,13 @@ export async function generatePostsAction(input: {
 
     let expandedVariants: GenerateVariant[] = [];
     if (expandTargets.length) {
+      const expandConcurrency = Math.max(
+        1,
+        resolveNumberEnv("GEMINI_EXPAND_CONCURRENCY", EXPAND_CONCURRENCY_DEFAULT)
+      );
       expandedVariants = await runWithConcurrency(
         expandTargets,
-        2,
+        expandConcurrency,
         async (variant) =>
           expandVariant({
             provider,
