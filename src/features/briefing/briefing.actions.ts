@@ -1,10 +1,11 @@
 'use server';
+import { revalidatePath } from "next/cache";
 import { BriefingFormValues, briefingSchema } from "@/domain/briefing";
 import { ensureDevUser } from "@/infra/dev/devUser";
 import { upsertBriefingForUser } from "./briefing.repository";
 
 export type SaveBriefingResult =
-  | { ok: true }
+  | { ok: true; redirectTo: "/dashboard" }
   | { ok: false; error: string };
 
 export async function saveBriefingAction(
@@ -15,8 +16,10 @@ export async function saveBriefingAction(
     const user = await ensureDevUser();
 
     await upsertBriefingForUser(user.id, input);
+    revalidatePath("/briefing");
+    revalidatePath("/dashboard");
 
-    return { ok: true };
+    return { ok: true, redirectTo: "/dashboard" };
   } catch (e) {
     console.error("[saveBriefingAction] failed:", e);
 

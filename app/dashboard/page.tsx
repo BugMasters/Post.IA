@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -11,8 +11,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
+import { ensureDevUser } from "@/infra/dev/devUser";
 
 export default async function DashboardPage() {
   const user = await ensureDevUser();
@@ -26,11 +26,16 @@ export default async function DashboardPage() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <div className="space-y-1">
-        <h1 className="text-3xl font-semibold text-foreground">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          Veja o briefing atual e o resumo estratégico que vai guiar seus posts.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-semibold text-foreground">Dashboard</h1>
+          <p className="text-sm text-muted-foreground">
+            Veja o briefing atual e o resumo estratégico que vai guiar seus posts.
+          </p>
+        </div>
+        <Button variant="outline" asChild className="w-full sm:w-auto">
+          <Link href="/profile">Editar perfil do autor</Link>
+        </Button>
       </div>
 
       {briefing ? (

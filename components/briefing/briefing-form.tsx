@@ -46,7 +46,7 @@ export default function BriefingForm({ defaultValues }: BriefingFormProps) {
     handleSubmit,
     watch,
     setValue,
-    formState: { errors },
+    formState: { errors, isSubmitting },
     reset,
   } = useForm<BriefingFormValues>({
     resolver: zodResolver(briefingSchema),
@@ -61,6 +61,7 @@ export default function BriefingForm({ defaultValues }: BriefingFormProps) {
   const selectedAvoid = watch("avoid") ?? [];
   const toneLimitReached = selectedTones.length >= 2;
   const toneCountText = `${selectedTones.length}/2 selecionados`;
+  const isBusy = isSubmitting || isPending;
 
   const toggleTone = (tone: string) => {
     const currentTones = selectedTones ?? [];
@@ -112,19 +113,22 @@ export default function BriefingForm({ defaultValues }: BriefingFormProps) {
     );
   };
 
-  const onSubmit = (values: BriefingFormValues) => {
+  const onSubmit = async (values: BriefingFormValues) => {
+    if (isBusy) {
+      return;
+    }
+
     setResult(null);
 
-    startTransition(() => {
-      void saveBriefingAction(values).then(async (response) => {
-        if (response.ok) {
-          await router.push("/dashboard");
-          router.refresh();
-          return;
-        }
+    const response = await saveBriefingAction(values);
 
-        setResult(response);
-      });
+    if (!response.ok) {
+      setResult(response);
+      return;
+    }
+
+    startTransition(() => {
+      router.push(response.redirectTo);
     });
   };
 
@@ -345,8 +349,8 @@ export default function BriefingForm({ defaultValues }: BriefingFormProps) {
 
         <CardFooter className="flex flex-col gap-3 border-t pt-4 px-6">
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={isPending}>
-              {isPending ? "Salvando..." : "Salvar e ver resumo"}
+            <Button type="submit" disabled={isBusy}>
+              {isBusy ? "Salvando..." : "Salvar e ver resumo"}
             </Button>
             <Button
               variant="ghost"
@@ -355,7 +359,7 @@ export default function BriefingForm({ defaultValues }: BriefingFormProps) {
             >
               Cancelar
             </Button>
-            {isPending && (
+            {isBusy && (
               <span className="text-xs text-muted-foreground">Salvando…</span>
             )}
           </div>

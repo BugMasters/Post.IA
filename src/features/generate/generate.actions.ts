@@ -1,14 +1,16 @@
 "use server";
 
-import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
+import { getAuthorProfileForUser } from "@/features/profile/profile.actions";
+import { ensureDevUser } from "@/infra/dev/devUser";
 import { getLlmProvider } from "@/infra/llm";
-import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
 import type { LlmProvider } from "@/infra/llm/provider";
+import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
 
 export type GeneratePostFormat = "TEXT" | "PHOTO_TEXT" | "PHOTO";
 
 type BriefingRecord = NonNullable<Awaited<ReturnType<typeof getLatestBriefingForUser>>>;
+type AuthorProfileRecord = Awaited<ReturnType<typeof getAuthorProfileForUser>>;
 
 const EXPECTED_VARIANT_LABELS = [
   "Direto",
@@ -52,6 +54,9 @@ const normalizeLabel = (label: unknown) =>
 
 const safeField = (value: string | undefined | null, fallback: string) =>
   value?.trim() || fallback;
+
+const safeAuthorProfileField = (value: string | undefined | null) =>
+  value?.trim() || "não informado";
 
 const cleanupResponseText = (raw: string) =>
   raw
@@ -173,10 +178,29 @@ const gatherResponseText = async (provider: LlmProvider, prompt: string) => {
   return provider.generateText(prompt);
 };
 
+const buildAuthorProfileBlock = (profile: AuthorProfileRecord) => {
+  if (!profile) {
+    return "[AUTHOR_PROFILE] não informado [/AUTHOR_PROFILE]";
+  }
+
+  return [
+    "[AUTHOR_PROFILE]",
+    `Cargo/Atuação: ${safeAuthorProfileField(profile.role)}`,
+    `Nicho: ${safeAuthorProfileField(profile.niche)}`,
+    `Público: ${safeAuthorProfileField(profile.audience)}`,
+    `Nível: ${safeAuthorProfileField(profile.audienceLevel)}`,
+    `Estilo: ${safeAuthorProfileField(profile.writingStyle)}`,
+    `Tom: ${safeAuthorProfileField(profile.tonePreference)}`,
+    `CTA preferido: ${safeAuthorProfileField(profile.ctaPreference)}`,
+    "[/AUTHOR_PROFILE]",
+  ].join("\n");
+};
+
 const buildPrompt = (
   theme: string,
   format: GeneratePostFormat,
-  briefing: BriefingRecord
+  briefing: BriefingRecord,
+  authorProfile: AuthorProfileRecord
 ) => {
   const goal = safeField(briefing.goal, "objetivo principal do briefing");
   const offer = safeField(briefing.offer, "oferta principal");
@@ -203,20 +227,22 @@ const buildPrompt = (
 
   const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
   const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
+  const authorProfileBlock = buildAuthorProfileBlock(authorProfile);
 
   return [
     "Você é um redator experiente focado em redes sociais B2B/B2C.",
     "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
     `Tema base: ${theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
+    authorProfileBlock,
     `Contexto: ${contextSummary}`,
     toneInstruction,
     `Evite: ${avoidSummary}.`,
     `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
-    "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
+    'Retorne APENAS JSON válido com estrutura { "variants": [ { "label": "...", "content": "..." }, ... ] }.',
     "Cada post deve ser em português, pronto para publicação, com no máximo 900 caracteres, primeira linha gancho forte, seguida de 3 bullets (um por linha) e CTA final.",
     `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
-    "Não invente dados, não use clichês como \"transforme sua vida\" ou \"ninguém te conta\", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.",
+    'Não invente dados, não use clichês como "transforme sua vida" ou "ninguém te conta", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.',
     "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
     "O gancho, bullets e CTA não podem usar clichês, textão ou figuras de autoridade exageradas.",
   ]
@@ -239,6 +265,7 @@ export async function generatePostsAction(input: {
 
   const user = await ensureDevUser();
   const briefing = await getLatestBriefingForUser(user.id);
+  const authorProfile = await getAuthorProfileForUser(user.id);
 
   if (!briefing) {
     return {
@@ -248,7 +275,7 @@ export async function generatePostsAction(input: {
   }
 
   const provider = getLlmProvider();
-  const prompt = buildPrompt(trimmedTheme, input.format, briefing);
+  const prompt = buildPrompt(trimmedTheme, input.format, briefing, authorProfile);
 
   const runPrompt = async (promptToSend: string) => {
     const rawResponse = await gatherResponseText(provider, promptToSend);
@@ -270,10 +297,7 @@ export async function generatePostsAction(input: {
         }
         const message =
           retryError instanceof Error ? retryError.message : DEFAULT_SERVER_ERROR_MESSAGE;
-        console.error(
-          "[generatePostsAction] erro ao gerar variações no retry:",
-          retryError
-        );
+        console.error("[generatePostsAction] erro ao gerar variações no retry:", retryError);
         return { ok: false, error: message || DEFAULT_SERVER_ERROR_MESSAGE };
       }
     }
