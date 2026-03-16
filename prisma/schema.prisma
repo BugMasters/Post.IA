@@ -21,6 +21,23 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   briefings Briefing[]
+  profile   AuthorProfile?
+}
+
+model AuthorProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  role           String
+  niche          String
+  audience       String
+  audienceLevel  String
+  writingStyle   String
+  tonePreference String
+  ctaPreference  String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Briefing {
