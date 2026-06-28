@@ -14,9 +14,26 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import { BriefingSnapshot, FormatOption } from "@/features/generate/mockGenerator";
-import { GeneratePostFormat, generatePostsAction } from "@/features/generate/generate.actions";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import {
+  DEFAULT_PLATFORM,
+  DEFAULT_POST_LENGTH,
+  DEFAULT_POST_OBJECTIVE,
+  getPostCharacterRange,
+  platformLabels,
+  platformOptions,
+  postLengthLabels,
+  postLengthOptions,
+  postObjectiveLabels,
+  postObjectiveOptions,
+  type Platform,
+  type PostLength,
+  type PostObjective,
+} from "@/domain/generate";
+import { generatePostsAction } from "@/features/generate/generate.actions";
+import type { GeneratePostFormat } from "@/features/generate/generate.actions";
+import type { BriefingSnapshot, FormatOption } from "@/features/generate/mockGenerator";
 import type { GenerateVariant } from "@/infra/llm/types";
 
 const formatOptions: FormatOption[] = ["Apenas texto", "Foto + texto", "Apenas foto"];
@@ -34,6 +51,10 @@ interface GenerateFormProps {
 export default function GenerateForm({ briefing }: GenerateFormProps) {
   const [theme, setTheme] = React.useState("");
   const [format, setFormat] = React.useState<FormatOption>("Apenas texto");
+  const [platform, setPlatform] = React.useState<Platform>(DEFAULT_PLATFORM);
+  const [objective, setObjective] =
+    React.useState<PostObjective>(DEFAULT_POST_OBJECTIVE);
+  const [length, setLength] = React.useState<PostLength>(DEFAULT_POST_LENGTH);
   const [variants, setVariants] = React.useState<GenerateVariant[]>([]);
   const [fieldError, setFieldError] = React.useState<string | null>(null);
   const [serverError, setServerError] = React.useState<string | null>(null);
@@ -41,6 +62,10 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
   const [isGenerating, setIsGenerating] = React.useState(false);
 
   const toneLabels = briefing.tone.length ? briefing.tone : ["Tom neutro"];
+  const characterRange = getPostCharacterRange(platform, length);
+  const characterHint = `${platformLabels[platform]} ${postLengthLabels[
+    length
+  ].toLowerCase()}: ${characterRange.min}-${characterRange.max} caracteres`;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -65,6 +90,9 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
       const result = await generatePostsAction({
         theme: trimmedTheme,
         format: formatTranslator[format],
+        platform,
+        objective,
+        length,
       });
 
       if (!result.ok) {
@@ -118,8 +146,9 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
           )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">Tema do post</label>
+              <Label htmlFor="theme">Tema do post</Label>
               <Input
+                id="theme"
                 value={theme}
                 onChange={(event) => setTheme(event.target.value)}
                 placeholder="Ex: Como posicionar minha marca pessoal"
@@ -130,25 +159,76 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
               )}
             </div>
 
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">Formato</label>
-              <select
-                value={format}
-                onChange={(event) => setFormat(event.target.value as FormatOption)}
-                className={cn(
-                  "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
-                  "disabled:cursor-not-allowed disabled:opacity-50"
-                )}
-              >
-                {formatOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="format">Formato</Label>
+                <Select
+                  id="format"
+                  value={format}
+                  onChange={(event) => setFormat(event.target.value as FormatOption)}
+                >
+                  {formatOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="platform">Plataforma</Label>
+                <Select
+                  id="platform"
+                  value={platform}
+                  onChange={(event) => setPlatform(event.target.value as Platform)}
+                >
+                  {platformOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {platformLabels[option]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="objective">Objetivo</Label>
+                <Select
+                  id="objective"
+                  value={objective}
+                  onChange={(event) =>
+                    setObjective(event.target.value as PostObjective)
+                  }
+                >
+                  {postObjectiveOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {postObjectiveLabels[option]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="length">Tamanho</Label>
+                <Select
+                  id="length"
+                  value={length}
+                  onChange={(event) => setLength(event.target.value as PostLength)}
+                >
+                  {postLengthOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {postLengthLabels[option]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                Faixa alvo de tamanho: {characterHint}.
+              </p>
               <Button type="submit" className="w-full" disabled={isGenerating}>
                 {isGenerating ? (
                   <>

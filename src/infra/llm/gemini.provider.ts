@@ -1,8 +1,12 @@
-import { LlmProvider } from "./provider";
+import {
+  LlmProvider,
+  LlmProviderError,
+  type LlmRequestOptions,
+} from "./provider";
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_TIMEOUT_MS = 30000;
+const DEFAULT_TIMEOUT_MS = 120000;
 
 type GeminiTextPart = {
   text?: string;
@@ -42,21 +46,35 @@ const getApiKey = () => {
   return apiKey;
 };
 
-const getTimeoutMs = () => {
-  const raw = process.env.GEMINI_TIMEOUT_MS?.trim();
-  if (!raw) {
-    return DEFAULT_TIMEOUT_MS;
-  }
-
+const parsePositiveNumber = (
+  raw: number | string,
+  label: string
+) => {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error("GEMINI_TIMEOUT_MS deve ser um numero positivo em milissegundos.");
+    throw new Error(`${label} deve ser um numero positivo.`);
   }
 
   return parsed;
 };
 
-const readJsonSafely = async (response: Response): Promise<GeminiErrorPayload | null> => {
+const getTimeoutMs = (requestOptions?: LlmRequestOptions) => {
+  const envTimeout = process.env.GEMINI_TIMEOUT_MS?.trim() || undefined;
+  const raw = requestOptions?.timeoutMs ?? envTimeout ?? DEFAULT_TIMEOUT_MS;
+  return parsePositiveNumber(raw, "GEMINI_TIMEOUT_MS");
+};
+
+const getMaxTokens = (requestOptions?: LlmRequestOptions) => {
+  if (requestOptions?.maxTokens == null) {
+    return undefined;
+  }
+
+  return parsePositiveNumber(requestOptions.maxTokens, "maxTokens");
+};
+
+const readJsonSafely = async (
+  response: Response
+): Promise<GeminiErrorPayload | null> => {
   const text = await response.text();
   if (!text.trim()) {
     return null;
@@ -140,17 +158,36 @@ const extractText = (payload: GeminiErrorPayload | null) => {
 };
 
 export class GeminiProvider implements LlmProvider {
-  async generateText(prompt: string): Promise<string> {
+  async generateText(
+    prompt: string,
+    requestOptions?: LlmRequestOptions
+  ): Promise<string> {
     const apiKey = getApiKey();
     const model = normalizeModel(process.env.GEMINI_MODEL);
     const baseUrl = normalizeBaseUrl(process.env.GEMINI_BASE_URL);
-    const timeoutMs = getTimeoutMs();
+    const timeoutMs = getTimeoutMs(requestOptions);
+    const maxTokens = getMaxTokens(requestOptions);
 
     const url = new URL(`${baseUrl}/models/${model}:generateContent`);
     url.searchParams.set("key", apiKey);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const requestBody = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: prompt }],
+        },
+      ],
+      ...(maxTokens
+        ? {
+            generationConfig: {
+              maxOutputTokens: maxTokens,
+            },
+          }
+        : {}),
+    };
 
     try {
       const response = await fetch(url, {
@@ -158,14 +195,7 @@ export class GeminiProvider implements LlmProvider {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: prompt }],
-            },
-          ],
-        }),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
 
@@ -178,7 +208,10 @@ export class GeminiProvider implements LlmProvider {
       return extractText(payload);
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
-        throw new Error(`Tempo limite excedido ao chamar o Gemini (${timeoutMs} ms).`);
+        throw new LlmProviderError(
+          "LLM_TIMEOUT",
+          `Tempo limite excedido ao chamar o Gemini (${timeoutMs} ms).`
+        );
       }
 
       if (error instanceof Error) {
