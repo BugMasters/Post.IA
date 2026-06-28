@@ -15,46 +15,82 @@ datasource db {
 }
 
 model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  positioning  PositioningProfile?
+  onboarding   OnboardingConversation?
+  posts        Post[]
+  feedbacks    PostFeedback[]
+}
+
+model PositioningProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  niche             String   @default("")
+  audience          String   @default("")
+  offer             String   @default("")
+  differentiation   String   @default("")
+  tonePreference    String   @default("")
+  ctaPreference     String   @default("")
+  positioningMemory String   @default("")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OnboardingConversation {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  userId    String   @unique
+  messages  Json     @default("[]")
+  status    String   @default("in_progress")
+  turnCount Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  briefings Briefing[]
-  profile   AuthorProfile?
-}
-
-model AuthorProfile {
-  id             String   @id @default(cuid())
-  userId         String   @unique
-  role           String
-  niche          String
-  audience       String
-  audienceLevel  String
-  writingStyle   String
-  tonePreference String
-  ctaPreference  String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model Briefing {
-  id              String    @id @default(cuid())
-  userId          String
-  goal            String
-  audience        String
-  audienceLevel   String
-  offer           String
-  differentiation String
-  tone            String[]
-  avoid           String[]
-  cta             String
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+model Post {
+  id        String   @id @default(cuid())
+  userId    String
+  theme     String
+  platform  String
+  length    String
+  objective String
+  variants  Json
+  createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedbacks PostFeedback[]
 
   @@index([userId])
+}
+
+model PostFeedback {
+  id            String   @id @default(cuid())
+  userId        String
+  postId        String
+  variantLabel  String
+  signal        String
+  editedContent String?
+  note          String?
+  processed     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([userId, processed])
+}
+
+model WaitlistEntry {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
 }
