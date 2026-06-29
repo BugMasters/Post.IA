@@ -81,7 +81,7 @@ const cleanupResponseText = (raw: string) =>
   raw
     .replace(/```(?:json)?/gi, "")
     .trim()
-    .replace(/^​+|​+$/g, "");
+    .replace(/^\u200b+|\u200b+$/g, "");
 
 const countCharacters = (content: string) => content.trim().length;
 
@@ -250,7 +250,7 @@ const buildVariantExpansionPrompt = ({
     `Label da variação: ${label}`,
     `Faixa obrigatória: ${characterRange.min}-${characterRange.max} caracteres.`,
     `CTA final obrigatório: ${cta}.`,
-    "Mantenha o texto em português, pronto para publicação e fiel ao briefing.",
+    "Mantenha o texto em português, pronto para publicação e fiel ao posicionamento.",
     "Retorne APENAS o texto final da variação, sem JSON, sem comentários e sem título extra.",
     "[CURRENT_VARIANT]",
     content,
