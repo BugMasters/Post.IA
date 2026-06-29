@@ -1,18 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Copy, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import VariantCard from "@/components/generate/variant-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -56,9 +51,9 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
     React.useState<PostObjective>(DEFAULT_POST_OBJECTIVE);
   const [length, setLength] = React.useState<PostLength>(DEFAULT_POST_LENGTH);
   const [variants, setVariants] = React.useState<GenerateVariant[]>([]);
+  const [postId, setPostId] = React.useState<string | null>(null);
   const [fieldError, setFieldError] = React.useState<string | null>(null);
   const [serverError, setServerError] = React.useState<string | null>(null);
-  const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [isGenerating, setIsGenerating] = React.useState(false);
 
   const toneLabels = briefing.tone.length ? briefing.tone : ["Tom neutro"];
@@ -101,21 +96,12 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
       }
 
       setVariants(result.variants);
-      setCopiedId(null);
+      setPostId(result.postId ?? null);
     } catch (caughtError) {
       console.error("[GenerateForm] geração falhou:", caughtError);
       setServerError("Erro inesperado ao gerar as variações.");
     } finally {
       setIsGenerating(false);
-    }
-  };
-
-  const handleCopy = async (variant: GenerateVariant) => {
-    try {
-      await navigator.clipboard.writeText(variant.content);
-      setCopiedId(variant.label);
-    } catch {
-      setCopiedId(null);
     }
   };
 
@@ -246,38 +232,15 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
       </Card>
 
       {variants.length > 0 ? (
-        <div className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {variants.map((variant) => (
-              <Card key={variant.label} className="space-y-3">
-                <CardHeader>
-                  <CardTitle className="text-lg">{variant.label}</CardTitle>
-                </CardHeader>
-                <CardContent className="!pt-0">
-                  <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-line">
-                    {variant.content}
-                  </p>
-                </CardContent>
-                <CardFooter className="flex flex-wrap items-center gap-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleCopy(variant)}
-                    type="button"
-                  >
-                    <Copy className="h-4 w-4" />
-                    {copiedId === variant.label ? "Copiado" : "Copiar"}
-                  </Button>
-                  <Button variant="ghost" size="sm" disabled title="Em breve" type="button">
-                    Salvar no planner
-                  </Button>
-                  {copiedId === variant.label && (
-                    <span className="text-xs text-muted-foreground">Conteúdo copiado</span>
-                  )}
-                </CardFooter>
-              </Card>
-            ))}
-          </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          {variants.map((variant) => (
+            <VariantCard
+              key={variant.label}
+              postId={postId ?? ""}
+              label={variant.label}
+              content={variant.content}
+            />
+          ))}
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-border/60 p-5 text-sm text-muted-foreground">
