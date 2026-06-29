@@ -4,7 +4,6 @@ import * as React from "react";
 import { Loader2 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import VariantCard from "@/components/generate/variant-card";
@@ -28,7 +27,7 @@ import {
 } from "@/domain/generate";
 import { generatePostsAction } from "@/features/generate/generate.actions";
 import type { GeneratePostFormat } from "@/features/generate/generate.actions";
-import type { BriefingSnapshot, FormatOption } from "@/domain/generate";
+import type { FormatOption } from "@/domain/generate";
 import type { GenerateVariant } from "@/infra/llm/types";
 
 const formatOptions: FormatOption[] = ["Apenas texto", "Foto + texto", "Apenas foto"];
@@ -39,11 +38,7 @@ const formatTranslator: Record<FormatOption, GeneratePostFormat> = {
   "Apenas foto": "PHOTO",
 };
 
-interface GenerateFormProps {
-  briefing: BriefingSnapshot;
-}
-
-export default function GenerateForm({ briefing }: GenerateFormProps) {
+export default function GenerateForm() {
   const [theme, setTheme] = React.useState("");
   const [format, setFormat] = React.useState<FormatOption>("Apenas texto");
   const [platform, setPlatform] = React.useState<Platform>(DEFAULT_PLATFORM);
@@ -56,7 +51,6 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
   const [serverError, setServerError] = React.useState<string | null>(null);
   const [isGenerating, setIsGenerating] = React.useState(false);
 
-  const toneLabels = briefing.tone.length ? briefing.tone : ["Tom neutro"];
   const characterRange = getPostCharacterRange(platform, length);
   const characterHint = `${platformLabels[platform]} ${postLengthLabels[
     length
@@ -107,21 +101,6 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
 
   return (
     <section className="space-y-6">
-      <Card className="border-dashed">
-        <CardContent className="space-y-3">
-          <p className="text-sm font-semibold text-foreground">Resumo do briefing atual</p>
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="primary">{briefing.goal}</Badge>
-            <Badge variant="subtle">
-              {briefing.audience} • {briefing.audienceLevel}
-            </Badge>
-            {toneLabels.map((tone) => (
-              <Badge key={tone}>{tone}</Badge>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
       <Card>
         <CardContent className="space-y-4">
           {serverError && (
@@ -244,7 +223,7 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
         </div>
       ) : (
         <div className="rounded-xl border border-dashed border-border/60 p-5 text-sm text-muted-foreground">
-          Preencha o tema e clique em gerar para abrir 6 variações baseadas no briefing.
+          Preencha o tema e clique em gerar para criar 6 variações alinhadas ao seu posicionamento.
         </div>
       )}
     </section>
