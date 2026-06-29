@@ -24,6 +24,7 @@ import {
   type LlmRequestOptions,
 } from "@/infra/llm/provider";
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
+import { savePost } from "@/features/posts/posts.repository";
 import {
   EXPECTED_VARIANT_LABELS,
   FORMAT_DESCRIPTIONS,
@@ -361,7 +362,14 @@ export async function generatePostsAction(
       input: validatedInput,
       cta,
     });
-    return { ok: true, variants: qualityCheckedVariants };
+    const saved = await savePost(user.id, {
+      theme: validatedInput.theme,
+      platform: validatedInput.platform,
+      length: validatedInput.length,
+      objective: validatedInput.objective,
+      variants: qualityCheckedVariants,
+    });
+    return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
   } catch (error) {
     if (error instanceof VariantParseError) {
       const retryPrompt = `${prompt}\n\nRETORNE APENAS JSON.`;
@@ -374,7 +382,14 @@ export async function generatePostsAction(
           input: validatedInput,
           cta,
         });
-        return { ok: true, variants: qualityCheckedVariants };
+        const saved = await savePost(user.id, {
+          theme: validatedInput.theme,
+          platform: validatedInput.platform,
+          length: validatedInput.length,
+          objective: validatedInput.objective,
+          variants: qualityCheckedVariants,
+        });
+        return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
       } catch (retryError) {
         if (retryError instanceof VariantParseError) {
           return { ok: false, error: PARSE_RETRY_ERROR_MESSAGE };
