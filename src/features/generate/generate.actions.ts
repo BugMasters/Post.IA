@@ -15,8 +15,7 @@ import {
   postObjectiveSchema,
   type PostObjective,
 } from "@/domain/generate";
-import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
-import { getAuthorProfileForUser } from "@/features/profile/profile.actions";
+import { getPositioningProfile } from "@/features/positioning/positioning.repository";
 import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
 import {
@@ -25,45 +24,16 @@ import {
   type LlmRequestOptions,
 } from "@/infra/llm/provider";
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
+import {
+  EXPECTED_VARIANT_LABELS,
+  FORMAT_DESCRIPTIONS,
+  buildPrompt,
+  buildPlatformBlock,
+  buildObjectiveBlock,
+  buildLengthBlock,
+} from "./generate.prompt";
 
 export type GeneratePostFormat = "TEXT" | "PHOTO_TEXT" | "PHOTO";
-
-type BriefingRecord = NonNullable<
-  Awaited<ReturnType<typeof getLatestBriefingForUser>>
->;
-type AuthorProfileRecord = Awaited<ReturnType<typeof getAuthorProfileForUser>>;
-
-const EXPECTED_VARIANT_LABELS = [
-  "Direto",
-  "Storytelling",
-  "Engraçado",
-  "Autoridade",
-  "Técnico",
-  "Empático",
-] as const;
-
-const FORMAT_DESCRIPTIONS: Record<GeneratePostFormat, string> = {
-  TEXT: "texto enxuto pronto para publicação em feed ou thread",
-  PHOTO_TEXT: "legenda que acompanha imagem marcante com contexto claro",
-  PHOTO: "foco na imagem, frase curta e impacto visual",
-};
-
-const AUDIENCE_LEVEL_GUIDANCE: Record<string, string> = {
-  Leigo:
-    "use analogias do cotidiano, explique ideias simples e evite termos técnicos demais",
-  Intermediário:
-    "combine contexto estratégico com termos reconhecíveis para quem já vive as dores do profissional",
-  Técnico:
-    "apresente termos precisos, referências práticas e passos objetivos sem perder a clareza",
-};
-
-const BASE_AVOIDANCES = [
-  "Jargão",
-  "Textão",
-  "Polêmica",
-  "Coach vibes",
-  "CTA agressivo",
-];
 
 const DEFAULT_SERVER_ERROR_MESSAGE =
   "Não foi possível gerar variações no momento.";
@@ -98,69 +68,6 @@ const generatePostsActionSchema = z.object({
 type GenerateActionInput = z.input<typeof generatePostsActionSchema>;
 type GenerateActionData = z.output<typeof generatePostsActionSchema>;
 
-const PLATFORM_BLOCKS: Record<Platform, string[]> = {
-  LINKEDIN: [
-    "Escreva com repertório profissional, clareza estratégica e credibilidade.",
-    "Use quebras de linha para facilitar a leitura em feed sem soar prolixo.",
-    "Quando fizer sentido, use bullets objetivos e uma conclusão prática.",
-  ],
-  INSTAGRAM: [
-    "Escreva com ritmo visual, frases curtas e leitura escaneável.",
-    "Priorize quebras de linha, cadência emocional e proximidade humana.",
-    "O texto deve funcionar como legenda nativa de Instagram, sem parecer um post de LinkedIn reciclado.",
-  ],
-};
-
-const OBJECTIVE_BLOCKS: Record<PostObjective, string[]> = {
-  ENSINAR: [
-    "Otimize para clareza, utilidade prática e aprendizado rápido.",
-    "Explique o raciocínio com exemplos, passos ou mini-frameworks concretos.",
-  ],
-  ENGAJAR: [
-    "Otimize para identificação, curiosidade e vontade de responder.",
-    "Crie abertura para comentário, reflexão ou conversa sem cair em clickbait.",
-  ],
-  VENDER: [
-    "Otimize para desejo, percepção de valor e próximo passo natural.",
-    "Mostre transformação e fit da oferta sem tom agressivo ou promoção dura.",
-  ],
-  AUTORIDADE: [
-    "Otimize para credibilidade, tese forte e confiança no repertório do autor.",
-    "Use critério, experiência e visão própria para demonstrar domínio do assunto.",
-  ],
-};
-
-const LENGTH_BLOCKS: Record<Platform, Record<PostLength, string[]>> = {
-  LINKEDIN: {
-    CURTO: [
-      "Faixa obrigatória: 500-800 caracteres.",
-      "Estrutura recomendada: gancho forte + insight central + CTA final.",
-    ],
-    MEDIO: [
-      "Faixa obrigatória: 900-1400 caracteres.",
-      "Estrutura recomendada: gancho + contexto + 2-4 blocos de desenvolvimento + CTA final.",
-    ],
-    LONGO: [
-      "Faixa obrigatória: 1500-2500 caracteres.",
-      "Estrutura obrigatória: gancho + contexto + 3-6 bullets + conclusão + CTA final.",
-    ],
-  },
-  INSTAGRAM: {
-    CURTO: [
-      "Faixa obrigatória: 300-600 caracteres.",
-      "Estrutura recomendada: gancho curto + desenvolvimento enxuto + CTA emocional ou pergunta final.",
-    ],
-    MEDIO: [
-      "Faixa obrigatória: 700-1100 caracteres.",
-      "Estrutura recomendada: gancho + blocos curtos com quebras + fechamento com pergunta ou CTA emocional.",
-    ],
-    LONGO: [
-      "Faixa obrigatória: 1200-1800 caracteres.",
-      "Estrutura obrigatória: frases curtas, muitas quebras de linha e CTA emocional ou pergunta final.",
-    ],
-  },
-};
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
@@ -170,14 +77,11 @@ const normalizeLabel = (label: unknown) =>
 const safeField = (value: string | undefined | null, fallback: string) =>
   value?.trim() || fallback;
 
-const safeAuthorProfileField = (value: string | undefined | null) =>
-  value?.trim() || "não informado";
-
 const cleanupResponseText = (raw: string) =>
   raw
     .replace(/```(?:json)?/gi, "")
     .trim()
-    .replace(/^\u200B+|\u200B+$/g, "");
+    .replace(/^​+|​+$/g, "");
 
 const countCharacters = (content: string) => content.trim().length;
 
@@ -323,91 +227,6 @@ const gatherResponseText = async (
   return provider.generateText(prompt, requestOptions);
 };
 
-const buildPlatformBlock = (platform: Platform) =>
-  ["[PLATFORM]", ...PLATFORM_BLOCKS[platform], "[/PLATFORM]"].join("\n");
-
-const buildObjectiveBlock = (objective: PostObjective) =>
-  ["[OBJECTIVE]", ...OBJECTIVE_BLOCKS[objective], "[/OBJECTIVE]"].join("\n");
-
-const buildLengthBlock = (platform: Platform, length: PostLength) =>
-  ["[LENGTH]", ...LENGTH_BLOCKS[platform][length], "[/LENGTH]"].join("\n");
-
-const buildAuthorProfileBlock = (profile: AuthorProfileRecord) => {
-  if (!profile) {
-    return "[AUTHOR_PROFILE] não informado [/AUTHOR_PROFILE]";
-  }
-
-  return [
-    "[AUTHOR_PROFILE]",
-    `Cargo/Atuação: ${safeAuthorProfileField(profile.role)}`,
-    `Nicho: ${safeAuthorProfileField(profile.niche)}`,
-    `Público: ${safeAuthorProfileField(profile.audience)}`,
-    `Nível: ${safeAuthorProfileField(profile.audienceLevel)}`,
-    `Estilo: ${safeAuthorProfileField(profile.writingStyle)}`,
-    `Tom: ${safeAuthorProfileField(profile.tonePreference)}`,
-    `CTA preferido: ${safeAuthorProfileField(profile.ctaPreference)}`,
-    "[/AUTHOR_PROFILE]",
-  ].join("\n");
-};
-
-const buildPrompt = (
-  input: GenerateActionData,
-  briefing: BriefingRecord,
-  authorProfile: AuthorProfileRecord
-) => {
-  const goal = safeField(briefing.goal, "objetivo principal do briefing");
-  const offer = safeField(briefing.offer, "oferta principal");
-  const differentiation = safeField(
-    briefing.differentiation,
-    "diferencial principal"
-  );
-  const audience = safeField(briefing.audience, "público-alvo não informado");
-  const audienceLevel = safeField(briefing.audienceLevel, "Intermediário");
-  const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
-  const cta = safeField(briefing.cta, "CTA respeitosa");
-  const characterRange = getPostCharacterRange(input.platform, input.length);
-
-  const audienceGuidance =
-    AUDIENCE_LEVEL_GUIDANCE[audienceLevel] ??
-    "Equilibre clareza e autoridade conforme o contexto.";
-
-  const avoidList = Array.from(
-    new Set([
-      ...(Array.isArray(briefing.avoid) ? briefing.avoid : []),
-      ...BASE_AVOIDANCES,
-    ])
-  );
-  const avoidSummary = avoidList.length ? avoidList.join(", ") : "nenhum";
-
-  const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
-  const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
-  const authorProfileBlock = buildAuthorProfileBlock(authorProfile);
-
-  return [
-    "Você é um redator experiente focado em redes sociais B2B/B2C.",
-    "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
-    `Tema base: ${input.theme}`,
-    `Formato solicitado: ${FORMAT_DESCRIPTIONS[input.format]}`,
-    authorProfileBlock,
-    buildPlatformBlock(input.platform),
-    buildObjectiveBlock(input.objective),
-    buildLengthBlock(input.platform, input.length),
-    `Contexto: ${contextSummary}`,
-    toneInstruction,
-    `Evite: ${avoidSummary}.`,
-    `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
-    'Retorne APENAS JSON válido com estrutura { "variants": [ { "label": "...", "content": "..." }, ... ] }.',
-    `Cada post deve ser em português, pronto para publicação, e ficar preferencialmente entre ${characterRange.min} e ${characterRange.max} caracteres.`,
-    "Respeite as regras de plataforma, objetivo e tamanho descritas nos blocos acima.",
-    `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
-    'Não invente dados, não use clichês como "transforme sua vida" ou "ninguém te conta", nem jargões, textão, coach vibes, polêmica ou CTA agressivo.',
-    "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
-    "O gancho, a estrutura e o CTA não podem usar clichês ou figuras de autoridade exageradas.",
-  ]
-    .filter(Boolean)
-    .join("\n");
-};
-
 const buildVariantExpansionPrompt = ({
   input,
   cta,
@@ -508,19 +327,18 @@ export async function generatePostsAction(
 
   const validatedInput = parsedInput.data;
   const user = await requireUser();
-  const briefing = await getLatestBriefingForUser(user.id);
-  const authorProfile = await getAuthorProfileForUser(user.id);
+  const profile = await getPositioningProfile(user.id);
 
-  if (!briefing) {
+  if (!profile) {
     return {
       ok: false,
-      error: "Salve um briefing antes de gerar os posts.",
+      error: "Conclua seu onboarding antes de gerar posts.",
     };
   }
 
   const provider = getLlmProvider();
-  const prompt = buildPrompt(validatedInput, briefing, authorProfile);
-  const cta = safeField(briefing.cta, "CTA respeitosa");
+  const prompt = buildPrompt(validatedInput, profile);
+  const cta = safeField(profile.ctaPreference, "CTA respeitosa");
   const generationRequestOptions = getGenerationRequestOptions(
     validatedInput.platform,
     validatedInput.length
