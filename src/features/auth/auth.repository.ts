@@ -14,5 +14,6 @@ export async function createUserWithPassword(
   const passwordHash = await bcrypt.hash(password, 10);
   return prisma.user.create({
     data: { email, name, passwordHash },
+    select: { id: true, email: true },
   });
 }
