@@ -10,5 +10,7 @@ describe("buildRelearnPrompt", () => {
     expect(prompt).toContain("Memória atual");
     expect(prompt).toContain("Direto");
     expect(prompt).toContain("muito seco");
+    expect(prompt).toContain("GOSTOU");
+    expect(prompt).toContain("NÃO GOSTOU");
   });
 });

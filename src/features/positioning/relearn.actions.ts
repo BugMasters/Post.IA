@@ -36,11 +36,11 @@ export async function relearnPositioningAction(): Promise<RelearnResult> {
 
     if (newMemory.length > 0) {
       await updatePositioningMemory(user.id, newMemory);
+      await markFeedbackProcessed(feedbacks.map((f) => f.id));
+      revalidatePath("/posicionamento");
+      return { ok: true, updated: true };
     }
-    await markFeedbackProcessed(feedbacks.map((f) => f.id));
-
-    revalidatePath("/posicionamento");
-    return { ok: true, updated: newMemory.length > 0 };
+    return { ok: true, updated: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro ao reaprender.";
     return { ok: false, error: message };
