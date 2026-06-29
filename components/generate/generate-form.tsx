@@ -235,7 +235,7 @@ export default function GenerateForm({ briefing }: GenerateFormProps) {
         <div className="grid gap-4 md:grid-cols-2">
           {variants.map((variant) => (
             <VariantCard
-              key={variant.label}
+              key={`${postId ?? ""}-${variant.label}`}
               postId={postId ?? ""}
               label={variant.label}
               content={variant.content}
