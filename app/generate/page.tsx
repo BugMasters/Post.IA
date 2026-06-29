@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/card";
 import { ClipboardList } from "lucide-react";
 
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import GenerateForm from "@/components/generate/generate-form";
 
@@ -19,7 +19,7 @@ const safeArray = (value: unknown) =>
     : [];
 
 export default async function GeneratePage() {
-  const user = await ensureDevUser();
+  const user = await requireUser();
   const briefing = await getLatestBriefingForUser(user.id);
 
   return (

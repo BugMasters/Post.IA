@@ -1,5 +1,5 @@
 import BriefingForm from "@/components/briefing/briefing-form";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import {
   BriefingFormValues,
@@ -53,7 +53,7 @@ function buildInitialValues(briefing: BriefingRecord | null): BriefingFormValues
 }
 
 export default async function BriefingPage() {
-  const user = await ensureDevUser();
+  const user = await requireUser();
   const briefing = await getLatestBriefingForUser(user.id);
   const initialValues = buildInitialValues(briefing);
   const isEditing = Boolean(briefing);

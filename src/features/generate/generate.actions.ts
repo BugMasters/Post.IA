@@ -17,7 +17,7 @@ import {
 } from "@/domain/generate";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
 import { getAuthorProfileForUser } from "@/features/profile/profile.actions";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
 import {
   LlmProviderError,
@@ -507,7 +507,7 @@ export async function generatePostsAction(
   }
 
   const validatedInput = parsedInput.data;
-  const user = await ensureDevUser();
+  const user = await requireUser();
   const briefing = await getLatestBriefingForUser(user.id);
   const authorProfile = await getAuthorProfileForUser(user.id);
 

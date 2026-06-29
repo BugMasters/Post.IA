@@ -5,7 +5,7 @@ import {
 } from "@/domain/authorProfile";
 import ProfileForm from "@/features/profile/components/profile-form";
 import { getAuthorProfileForUser } from "@/features/profile/profile.actions";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 
 const isAudienceLevel = (
   value: string
@@ -29,7 +29,7 @@ const toDefaultValues = (
 });
 
 export default async function ProfilePage() {
-  const user = await ensureDevUser();
+  const user = await requireUser();
   const profile = await getAuthorProfileForUser(user.id);
 
   return (

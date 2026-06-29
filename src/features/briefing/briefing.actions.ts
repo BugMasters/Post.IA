@@ -1,7 +1,7 @@
 'use server';
 import { revalidatePath } from "next/cache";
 import { BriefingFormValues, briefingSchema } from "@/domain/briefing";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 import { upsertBriefingForUser } from "./briefing.repository";
 
 export type SaveBriefingResult =
@@ -13,7 +13,7 @@ export async function saveBriefingAction(
 ): Promise<SaveBriefingResult> {
   try {
     const input = briefingSchema.parse(values);
-    const user = await ensureDevUser();
+    const user = await requireUser();
 
     await upsertBriefingForUser(user.id, input);
     revalidatePath("/briefing");

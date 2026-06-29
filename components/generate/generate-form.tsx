@@ -33,7 +33,7 @@ import {
 } from "@/domain/generate";
 import { generatePostsAction } from "@/features/generate/generate.actions";
 import type { GeneratePostFormat } from "@/features/generate/generate.actions";
-import type { BriefingSnapshot, FormatOption } from "@/features/generate/mockGenerator";
+import type { BriefingSnapshot, FormatOption } from "@/domain/generate";
 import type { GenerateVariant } from "@/infra/llm/types";
 
 const formatOptions: FormatOption[] = ["Apenas texto", "Foto + texto", "Apenas foto"];

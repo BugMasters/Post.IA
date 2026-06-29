@@ -12,10 +12,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 
 export default async function DashboardPage() {
-  const user = await ensureDevUser();
+  const user = await requireUser();
   const briefing = await getLatestBriefingForUser(user.id);
 
   const bullets = [

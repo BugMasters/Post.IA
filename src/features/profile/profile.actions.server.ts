@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { ZodError } from "zod";
 
 import { authorProfileSchema, type AuthorProfileValues } from "@/domain/authorProfile";
-import { ensureDevUser } from "@/infra/dev/devUser";
+import { requireUser } from "@/infra/auth/require-user";
 
 import { upsertAuthorProfileForUser } from "./profile.actions";
 
@@ -15,7 +15,7 @@ export async function saveAuthorProfileAction(
 ): Promise<SaveAuthorProfileResult> {
   try {
     const input = authorProfileSchema.parse(values);
-    const user = await ensureDevUser();
+    const user = await requireUser();
 
     await upsertAuthorProfileForUser(user.id, input);
 

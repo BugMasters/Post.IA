@@ -66,3 +66,16 @@ export const getPostCharacterRange = (
   platform: Platform,
   length: PostLength
 ) => characterRangesByPlatform[platform][length];
+
+export type FormatOption = "Apenas texto" | "Foto + texto" | "Apenas foto";
+
+export interface BriefingSnapshot {
+  goal: string;
+  audience: string;
+  audienceLevel: string;
+  offer: string;
+  differentiation: string;
+  tone: string[];
+  avoid: string[];
+  cta: string;
+}
