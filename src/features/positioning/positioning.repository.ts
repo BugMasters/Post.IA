@@ -1,5 +1,5 @@
 import { prisma } from "@/infra/db/prisma";
-import type { PositioningSeed } from "@/domain/onboarding";
+import type { PositioningSeed, PositioningPatch } from "@/domain/onboarding";
 
 export async function getPositioningProfile(userId: string) {
   return prisma.positioningProfile.findUnique({ where: { userId } });
@@ -17,5 +17,12 @@ export async function updatePositioningMemory(userId: string, positioningMemory:
   return prisma.positioningProfile.update({
     where: { userId },
     data: { positioningMemory },
+  });
+}
+
+export async function updatePositioningProfile(userId: string, patch: PositioningPatch) {
+  return prisma.positioningProfile.update({
+    where: { userId },
+    data: patch,
   });
 }
