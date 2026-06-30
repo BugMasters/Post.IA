@@ -40,18 +40,20 @@ const DEFAULT_SERVER_ERROR_MESSAGE =
   "Não foi possível gerar variações no momento.";
 const PARSE_RETRY_ERROR_MESSAGE =
   "Não foi possível gerar variações. Tente novamente.";
+// Orcamento cobre as 6 variacoes inteiras (nao por-variante). Cada variacao
+// pode ter ~1 token a cada 3 caracteres em portugues; 6x o limite alto + JSON.
 const LENGTH_REQUEST_OPTIONS: Record<
   PostLength,
   { maxTokens: number; timeoutMs: number }
 > = {
-  CURTO: { maxTokens: 300, timeoutMs: 45000 },
-  MEDIO: { maxTokens: 650, timeoutMs: 90000 },
-  LONGO: { maxTokens: 1100, timeoutMs: 120000 },
+  CURTO: { maxTokens: 2048, timeoutMs: 60000 },
+  MEDIO: { maxTokens: 4096, timeoutMs: 90000 },
+  LONGO: { maxTokens: 8192, timeoutMs: 120000 },
 };
 const INSTAGRAM_TOKEN_REDUCTION_FACTOR = 0.85;
 const EXPANSION_REQUEST_OPTIONS: LlmRequestOptions = {
-  maxTokens: 250,
-  timeoutMs: 45000,
+  maxTokens: 1024,
+  timeoutMs: 60000,
 };
 const generatePostFormatOptions = ["TEXT", "PHOTO_TEXT", "PHOTO"] as const;
 
