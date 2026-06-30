@@ -38,6 +38,7 @@ export default function PositioningEditor({ profile }: { profile: EditableProfil
   const setField = (key: keyof EditableProfile, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSaved(false);
+    setError(null);
   };
 
   const handleSave = () =>
