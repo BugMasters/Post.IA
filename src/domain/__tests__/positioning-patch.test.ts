@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ZodError } from "zod";
 import { positioningPatchSchema } from "../onboarding";
 
 describe("positioningPatchSchema", () => {
@@ -13,10 +14,10 @@ describe("positioningPatchSchema", () => {
   });
 
   it("rejeita positioningMemory vazia quando presente", () => {
-    expect(() => positioningPatchSchema.parse({ positioningMemory: "" })).toThrow();
+    expect(() => positioningPatchSchema.parse({ positioningMemory: "" })).toThrowError(ZodError);
   });
 
   it("rejeita patch vazio", () => {
-    expect(() => positioningPatchSchema.parse({})).toThrow();
+    expect(() => positioningPatchSchema.parse({})).toThrow("Informe ao menos um campo");
   });
 });
