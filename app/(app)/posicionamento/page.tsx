@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requireUser } from "@/infra/auth/require-user";
 import { getPositioningProfile } from "@/features/positioning/positioning.repository";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import PositioningEditor from "@/components/positioning/positioning-editor";
 
 export default async function PosicionamentoPage() {
   const user = await requireUser();
@@ -21,14 +21,19 @@ export default async function PosicionamentoPage() {
   return (
     <main className="mx-auto max-w-2xl space-y-6 p-6">
       <h1 className="text-3xl font-semibold">Seu posicionamento</h1>
-      <Card>
-        <CardHeader><CardTitle>Memória viva</CardTitle></CardHeader>
-        <CardContent>
-          <p className="whitespace-pre-wrap text-sm">{profile.positioningMemory}</p>
-        </CardContent>
-      </Card>
+      <PositioningEditor
+        profile={{
+          niche: profile.niche,
+          audience: profile.audience,
+          offer: profile.offer,
+          differentiation: profile.differentiation,
+          tonePreference: profile.tonePreference,
+          ctaPreference: profile.ctaPreference,
+          positioningMemory: profile.positioningMemory,
+        }}
+      />
       <p className="text-xs text-muted-foreground">
-        Atualiza sozinho conforme você dá feedback nos posts.
+        A memória também atualiza sozinha conforme você dá feedback nos posts.
       </p>
     </main>
   );
