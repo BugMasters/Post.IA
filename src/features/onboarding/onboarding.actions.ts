@@ -39,10 +39,12 @@ export async function advanceOnboardingAction(userMessage: string): Promise<Adva
     }
 
     const provider = getLlmProvider();
-    const raw = (await provider.generateText(buildNextQuestionPrompt(messages), {
-      maxTokens: 200,
+    const rawResponse = (await provider.generateText(buildNextQuestionPrompt(messages), {
+      maxTokens: 256,
       timeoutMs: 30000,
     })).trim();
+    // o modelo as vezes ecoa o rotulo do papel ("ENTREVISTADOR:") do historico.
+    const raw = rawResponse.replace(/^(ENTREVISTADOR|EXPERT)\s*:\s*/i, "").trim();
 
     if (raw.includes(READY)) {
       await saveOnboarding(user.id, messages, "in_progress", turnCount);

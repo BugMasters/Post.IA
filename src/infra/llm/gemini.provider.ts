@@ -180,13 +180,12 @@ export class GeminiProvider implements LlmProvider {
           parts: [{ text: prompt }],
         },
       ],
-      ...(maxTokens
-        ? {
-            generationConfig: {
-              maxOutputTokens: maxTokens,
-            },
-          }
-        : {}),
+      generationConfig: {
+        // gemini-2.5-* sao modelos de "thinking": sem isto, os tokens de
+        // raciocinio consomem maxOutputTokens e o texto sai truncado.
+        thinkingConfig: { thinkingBudget: 0 },
+        ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
+      },
     };
 
     try {
