@@ -51,7 +51,7 @@ export async function listPositiveExamples(
     orderBy: { createdAt: "desc" },
   });
 
-  // Ordena por prioridade de sinal; desempate já resolvido pelo orderBy desc acima
+  // Reordena por prioridade de sinal; dentro do mesmo rank, desempata por createdAt desc.
   const ranked = [...rows].sort((a, b) => {
     const rank = (SIGNAL_RANK[a.signal] ?? 99) - (SIGNAL_RANK[b.signal] ?? 99);
     if (rank !== 0) return rank;

@@ -1,5 +1,5 @@
 // src/features/feedback/__tests__/positive-examples.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const findMany = vi.fn();
 vi.mock("@/infra/db/prisma", () => ({
@@ -13,6 +13,8 @@ const post = (variants: { label: string; content: string }[]) => ({
 });
 
 describe("listPositiveExamples", () => {
+  beforeEach(() => findMany.mockReset());
+
   it("prioriza more_like_this > edited > liked e respeita o limite", async () => {
     findMany.mockResolvedValueOnce([
       { signal: "liked", variantLabel: "Direto", editedContent: null, createdAt: new Date("2026-06-01"), post: post([{ label: "Direto", content: "conteúdo liked" }]) },
