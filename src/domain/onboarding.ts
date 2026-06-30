@@ -19,3 +19,19 @@ export const positioningSeedSchema = z.object({
   positioningMemory: z.string().min(1),
 });
 export type PositioningSeed = z.infer<typeof positioningSeedSchema>;
+
+export const positioningPatchSchema = z
+  .object({
+    niche: z.string(),
+    audience: z.string(),
+    offer: z.string(),
+    differentiation: z.string(),
+    tonePreference: z.string(),
+    ctaPreference: z.string(),
+    positioningMemory: z.string().min(1, "A memória não pode ficar vazia."),
+  })
+  .partial()
+  .refine((patch) => Object.keys(patch).length > 0, {
+    message: "Informe ao menos um campo para atualizar.",
+  });
+export type PositioningPatch = z.infer<typeof positioningPatchSchema>;
