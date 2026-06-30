@@ -144,7 +144,7 @@ export const buildPrompt = (
 
   return [
     "Você é um redator experiente focado em redes sociais B2B/B2C.",
-    "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
+    "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do posicionamento nos textos finais.",
     `Tema base: ${input.theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[input.format]}`,
     buildPositioningBlock(profile),
@@ -158,7 +158,7 @@ export const buildPrompt = (
     "Respeite as regras de plataforma, objetivo e tamanho descritas nos blocos acima.",
     `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
     'Não invente dados, não use clichês como "transforme sua vida" ou "ninguém te conta", nem jargões, textão, coach vibes, polêmica ou CTA agressivo.',
-    "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
+    "O conteúdo deve evitar mencionar diretamente os campos do posicionamento e não pode trazer claims não fornecidas.",
     "O gancho, a estrutura e o CTA não podem usar clichês ou figuras de autoridade exageradas.",
   ]
     .filter(Boolean)
