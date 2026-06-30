@@ -1,4 +1,5 @@
 import type { PositioningProfile } from "@/generated/prisma";
+import type { PositiveExample } from "@/features/feedback/feedback.repository";
 import {
   getPostCharacterRange,
   type Platform,
@@ -125,6 +126,24 @@ export function buildPositioningBlock(
 const safeField = (value: string | undefined | null, fallback: string) =>
   value?.trim() || fallback;
 
+export const FEW_SHOT_CHAR_CAP = 500;
+
+export function buildFewShotBlock(examples: PositiveExample[]) {
+  if (examples.length === 0) return "";
+  const lines = examples.map((ex, index) => {
+    const text = ex.content.length > FEW_SHOT_CHAR_CAP
+      ? `${ex.content.slice(0, FEW_SHOT_CHAR_CAP)}…`
+      : ex.content;
+    return `Exemplo ${index + 1} (${ex.label}):\n${text}`;
+  });
+  return [
+    "[EXEMPLOS_NA_VOZ_DO_USUARIO]",
+    "Use o estilo e a voz destes textos que o usuário aprovou ou editou. Não copie o conteúdo, apenas a voz.",
+    ...lines,
+    "[/EXEMPLOS_NA_VOZ_DO_USUARIO]",
+  ].join("\n");
+}
+
 export type GeneratePromptInput = {
   theme: string;
   format: GeneratePostFormat;
@@ -135,12 +154,14 @@ export type GeneratePromptInput = {
 
 export const buildPrompt = (
   input: GeneratePromptInput,
-  profile: Pick<PositioningProfile, "positioningMemory" | "ctaPreference">
+  profile: Pick<PositioningProfile, "positioningMemory" | "ctaPreference">,
+  examples: PositiveExample[] = []
 ) => {
   const cta = safeField(profile.ctaPreference, "CTA respeitosa");
   const characterRange = getPostCharacterRange(input.platform, input.length);
 
   const avoidSummary = BASE_AVOIDANCES.join(", ");
+  const fewShotBlock = buildFewShotBlock(examples);
 
   return [
     "Você é um redator experiente focado em redes sociais B2B/B2C.",
@@ -148,6 +169,7 @@ export const buildPrompt = (
     `Tema base: ${input.theme}`,
     `Formato solicitado: ${FORMAT_DESCRIPTIONS[input.format]}`,
     buildPositioningBlock(profile),
+    fewShotBlock,
     buildPlatformBlock(input.platform),
     buildObjectiveBlock(input.objective),
     buildLengthBlock(input.platform, input.length),
