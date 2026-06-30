@@ -25,6 +25,7 @@ import {
 } from "@/infra/llm/provider";
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
 import { savePost } from "@/features/posts/posts.repository";
+import { listPositiveExamples } from "@/features/feedback/feedback.repository";
 import {
   EXPECTED_VARIANT_LABELS,
   FORMAT_DESCRIPTIONS,
@@ -51,6 +52,7 @@ const LENGTH_REQUEST_OPTIONS: Record<
   LONGO: { maxTokens: 8192, timeoutMs: 120000 },
 };
 const INSTAGRAM_TOKEN_REDUCTION_FACTOR = 0.85;
+const FEW_SHOT_LIMIT = 3;
 const EXPANSION_REQUEST_OPTIONS: LlmRequestOptions = {
   maxTokens: 1024,
   timeoutMs: 60000,
@@ -339,8 +341,15 @@ export async function generatePostsAction(
     };
   }
 
+  let examples: Awaited<ReturnType<typeof listPositiveExamples>> = [];
+  try {
+    examples = await listPositiveExamples(user.id, FEW_SHOT_LIMIT);
+  } catch (error) {
+    console.error("[generatePostsAction] falha ao buscar exemplos few-shot:", error);
+  }
+
   const provider = getLlmProvider();
-  const prompt = buildPrompt(validatedInput, profile);
+  const prompt = buildPrompt(validatedInput, profile, examples);
   const cta = safeField(profile.ctaPreference, "CTA respeitosa");
   const generationRequestOptions = getGenerationRequestOptions(
     validatedInput.platform,
