@@ -4,6 +4,7 @@
 import { useState, useTransition } from "react";
 import { submitFeedbackAction } from "@/features/feedback/feedback.actions";
 import { relearnPositioningAction } from "@/features/positioning/relearn.actions";
+import { regenerateVariantAction } from "@/features/generate/regenerate.actions";
 import type { FeedbackSignal } from "@/domain/feedback";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,6 +24,7 @@ export default function VariantCard({
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(content);
+  const [regenError, setRegenError] = useState<string | null>(null);
 
   const react = (signal: FeedbackSignal) =>
     startTransition(async () => {
@@ -45,6 +47,18 @@ export default function VariantCard({
         setSent("edited");
         setEditing(false);
         if (result.shouldRelearn) await relearnPositioningAction();
+      }
+    });
+
+  const regenerate = () =>
+    startTransition(async () => {
+      setRegenError(null);
+      const result = await regenerateVariantAction(postId, label);
+      if (result.ok) {
+        setDraft(result.content);
+        setEditing(false);
+      } else {
+        setRegenError(result.error);
       }
     });
 
@@ -79,12 +93,16 @@ export default function VariantCard({
               <Button size="sm" variant="outline" disabled={pending} onClick={() => { setDraft(content); setEditing(false); }}>Cancelar</Button>
             </>
           ) : (
-            <Button size="sm" variant="outline" disabled={pending} onClick={() => setEditing(true)}>Editar</Button>
+            <>
+              <Button size="sm" variant="outline" disabled={pending} onClick={() => setEditing(true)}>Editar</Button>
+              <Button size="sm" variant="outline" disabled={pending} onClick={regenerate}>Regenerar</Button>
+            </>
           )}
           <Button size="sm" variant={sent === "liked" ? "default" : "outline"} disabled={pending} onClick={() => react("liked")}>👍</Button>
           <Button size="sm" variant={sent === "disliked" ? "default" : "outline"} disabled={pending} onClick={() => react("disliked")}>👎</Button>
           <Button size="sm" variant={sent === "more_like_this" ? "default" : "outline"} disabled={pending} onClick={() => react("more_like_this")}>Mais assim</Button>
         </div>
+        {regenError && <p className="text-xs text-destructive">{regenError}</p>}
       </CardContent>
     </Card>
   );
