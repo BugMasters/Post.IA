@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { submitFeedbackAction } from "@/features/feedback/feedback.actions";
 import { relearnPositioningAction } from "@/features/positioning/relearn.actions";
 import { regenerateVariantAction } from "@/features/generate/regenerate.actions";
+import { createDraftAction } from "@/features/drafts/draft.actions";
 import type { FeedbackSignal } from "@/domain/feedback";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,8 @@ export default function VariantCard({
   const [baseline, setBaseline] = useState(content);
   const [draft, setDraft] = useState(content);
   const [regenError, setRegenError] = useState<string | null>(null);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
 
   const react = (signal: FeedbackSignal) =>
     startTransition(async () => {
@@ -67,6 +70,18 @@ export default function VariantCard({
       }
     });
 
+  const saveDraft = () =>
+    startTransition(async () => {
+      setDraftError(null);
+      const result = await createDraftAction({ postId, label, content: draft });
+      if (result.ok) {
+        setDraftSaved(true);
+        setTimeout(() => setDraftSaved(false), 1500);
+      } else {
+        setDraftError(result.error);
+      }
+    });
+
   const handleCopyClick = async () => {
     try {
       await navigator.clipboard.writeText(draft);
@@ -101,6 +116,7 @@ export default function VariantCard({
             <>
               <Button size="sm" variant="outline" disabled={pending} onClick={() => { setRegenError(null); setEditing(true); }}>Editar</Button>
               <Button size="sm" variant="outline" disabled={pending} onClick={regenerate}>Regenerar</Button>
+              <Button size="sm" variant="outline" disabled={pending} onClick={saveDraft}>{draftSaved ? "Salvo" : "Salvar rascunho"}</Button>
             </>
           )}
           <Button size="sm" variant={sent === "liked" ? "default" : "outline"} disabled={pending} onClick={() => react("liked")}>👍</Button>
@@ -108,6 +124,7 @@ export default function VariantCard({
           <Button size="sm" variant={sent === "more_like_this" ? "default" : "outline"} disabled={pending} onClick={() => react("more_like_this")}>Mais assim</Button>
         </div>
         {regenError && <p className="text-xs text-destructive">{regenError}</p>}
+        {draftError && <p className="text-xs text-destructive">{draftError}</p>}
       </CardContent>
     </Card>
   );
