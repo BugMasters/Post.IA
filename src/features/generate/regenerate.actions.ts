@@ -23,6 +23,9 @@ const REGENERATE_REQUEST_OPTIONS: LlmRequestOptions = {
   timeoutMs: 60000,
 };
 
+const DEFAULT_REGENERATE_ERROR = "Não foi possível regenerar a variação.";
+
+// Remove cercas de código que a IA às vezes adiciona ao redor do texto.
 const cleanText = (raw: string) =>
   raw.replace(/```(?:json)?/gi, "").trim();
 
@@ -33,8 +36,11 @@ export async function regenerateVariantAction(
   postId: string,
   label: string
 ): Promise<RegenerateVariantResult> {
+  // Fora do try: requireUser pode chamar redirect() (lança NEXT_REDIRECT), que
+  // não deve ser capturado como erro de aplicação — deixa o redirect propagar.
+  const user = await requireUser();
+
   try {
-    const user = await requireUser();
     const post = await getPost(user.id, postId);
     if (!post) {
       return { ok: false, error: "Post não encontrado." };
@@ -78,8 +84,7 @@ export async function regenerateVariantAction(
     await updatePostVariants(user.id, postId, newVariants);
     return { ok: true, content: newContent };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Erro ao regenerar a variação.";
-    return { ok: false, error: message };
+    console.error("[regenerateVariantAction] erro ao regenerar variação:", error);
+    return { ok: false, error: DEFAULT_REGENERATE_ERROR };
   }
 }

@@ -23,6 +23,9 @@ export default function VariantCard({
   const [sent, setSent] = useState<FeedbackSignal | null>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Última versão "confirmada" (regenerada ou edição salva). Cancelar volta aqui,
+  // não para o prop `content` congelado, evitando divergência UI/DB e drift de aprendizado.
+  const [baseline, setBaseline] = useState(content);
   const [draft, setDraft] = useState(content);
   const [regenError, setRegenError] = useState<string | null>(null);
 
@@ -45,6 +48,7 @@ export default function VariantCard({
       });
       if (result.ok) {
         setSent("edited");
+        setBaseline(draft);
         setEditing(false);
         if (result.shouldRelearn) await relearnPositioningAction();
       }
@@ -55,6 +59,7 @@ export default function VariantCard({
       setRegenError(null);
       const result = await regenerateVariantAction(postId, label);
       if (result.ok) {
+        setBaseline(result.content);
         setDraft(result.content);
         setEditing(false);
       } else {
@@ -90,11 +95,11 @@ export default function VariantCard({
           {editing ? (
             <>
               <Button size="sm" disabled={pending} onClick={saveEdit}>Salvar edição</Button>
-              <Button size="sm" variant="outline" disabled={pending} onClick={() => { setDraft(content); setEditing(false); }}>Cancelar</Button>
+              <Button size="sm" variant="outline" disabled={pending} onClick={() => { setDraft(baseline); setEditing(false); }}>Cancelar</Button>
             </>
           ) : (
             <>
-              <Button size="sm" variant="outline" disabled={pending} onClick={() => setEditing(true)}>Editar</Button>
+              <Button size="sm" variant="outline" disabled={pending} onClick={() => { setRegenError(null); setEditing(true); }}>Editar</Button>
               <Button size="sm" variant="outline" disabled={pending} onClick={regenerate}>Regenerar</Button>
             </>
           )}
