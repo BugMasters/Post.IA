@@ -68,3 +68,41 @@ export const getPostCharacterRange = (
 ) => characterRangesByPlatform[platform][length];
 
 export type FormatOption = "Apenas texto" | "Foto + texto" | "Apenas foto";
+
+export const toneOptions = [
+  "AUTOMATICO",
+  "DIDATICO",
+  "PROVOCADOR",
+  "STORYTELLING",
+  "DIRETO",
+] as const;
+export const angleOptions = [
+  "AUTOMATICO",
+  "CONTRARIAN",
+  "CASO_REAL",
+  "PASSO_A_PASSO",
+] as const;
+
+export const DEFAULT_TONE = "AUTOMATICO";
+export const DEFAULT_ANGLE = "AUTOMATICO";
+
+export const toneSchema = z.enum(toneOptions).default(DEFAULT_TONE);
+export const angleSchema = z.enum(angleOptions).default(DEFAULT_ANGLE);
+
+export type ToneOption = z.output<typeof toneSchema>;
+export type AngleOption = z.output<typeof angleSchema>;
+
+export const toneLabels: Record<ToneOption, string> = {
+  AUTOMATICO: "Automático",
+  DIDATICO: "Didático",
+  PROVOCADOR: "Provocador",
+  STORYTELLING: "Storytelling",
+  DIRETO: "Direto",
+};
+
+export const angleLabels: Record<AngleOption, string> = {
+  AUTOMATICO: "Automático",
+  CONTRARIAN: "Contrarian",
+  CASO_REAL: "Caso real",
+  PASSO_A_PASSO: "Passo a passo",
+};
