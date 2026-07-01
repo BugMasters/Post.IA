@@ -5,6 +5,8 @@ import {
   type Platform,
   type PostLength,
   type PostObjective,
+  type ToneOption,
+  type AngleOption,
 } from "@/domain/generate";
 import type { GeneratePostFormat } from "./generate.actions";
 
@@ -144,12 +146,35 @@ export function buildFewShotBlock(examples: PositiveExample[]) {
   ].join("\n");
 }
 
+const TONE_GUIDANCE: Record<Exclude<ToneOption, "AUTOMATICO">, string> = {
+  DIDATICO: "Tom didático: explique com clareza, exemplos e ritmo de quem ensina.",
+  PROVOCADOR: "Tom provocador: tese forte, contraponto e leve tensão, sem ofender.",
+  STORYTELLING: "Tom de storytelling: comece por uma cena concreta e conduza por narrativa.",
+  DIRETO: "Tom direto: vá ao ponto, frases curtas, zero rodeio.",
+};
+
+const ANGLE_GUIDANCE: Record<Exclude<AngleOption, "AUTOMATICO">, string> = {
+  CONTRARIAN: "Ângulo contrarian: parta de uma visão contra o senso comum e sustente com argumento.",
+  CASO_REAL: "Ângulo de caso real: ancore em uma situação concreta e prática.",
+  PASSO_A_PASSO: "Ângulo passo a passo: estruture como sequência clara de passos acionáveis.",
+};
+
+export function buildToneAngleBlock(tone: ToneOption, angle: AngleOption) {
+  const lines: string[] = [];
+  if (tone !== "AUTOMATICO") lines.push(TONE_GUIDANCE[tone]);
+  if (angle !== "AUTOMATICO") lines.push(ANGLE_GUIDANCE[angle]);
+  if (lines.length === 0) return "";
+  return ["[TOM_E_ANGULO]", ...lines, "[/TOM_E_ANGULO]"].join("\n");
+}
+
 export type GeneratePromptInput = {
   theme: string;
   format: GeneratePostFormat;
   platform: Platform;
   objective: PostObjective;
   length: PostLength;
+  tone: ToneOption;
+  angle: AngleOption;
 };
 
 export const buildPrompt = (
@@ -172,6 +197,7 @@ export const buildPrompt = (
     fewShotBlock,
     buildPlatformBlock(input.platform),
     buildObjectiveBlock(input.objective),
+    buildToneAngleBlock(input.tone, input.angle),
     buildLengthBlock(input.platform, input.length),
     `Evite: ${avoidSummary}.`,
     `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,

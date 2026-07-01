@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildPositioningBlock, buildFewShotBlock, buildPrompt } from "../generate.prompt";
+import { buildPositioningBlock, buildFewShotBlock, buildPrompt, buildToneAngleBlock } from "../generate.prompt";
 
 describe("buildPositioningBlock", () => {
   it("inclui a memória viva", () => {
@@ -38,6 +38,8 @@ describe("buildPrompt few-shot", () => {
     platform: "LINKEDIN" as const,
     objective: "ENSINAR" as const,
     length: "CURTO" as const,
+    tone: "AUTOMATICO" as const,
+    angle: "AUTOMATICO" as const,
   };
   const profile = { positioningMemory: "memória", ctaPreference: "Comente" } as any;
 
@@ -49,5 +51,44 @@ describe("buildPrompt few-shot", () => {
   it("não injeta bloco sem exemplos", () => {
     const prompt = buildPrompt(input, profile, []);
     expect(prompt).not.toContain("EXEMPLOS_NA_VOZ_DO_USUARIO");
+  });
+});
+
+describe("buildToneAngleBlock", () => {
+  it("retorna vazio quando ambos automáticos", () => {
+    expect(buildToneAngleBlock("AUTOMATICO", "AUTOMATICO")).toBe("");
+  });
+
+  it("inclui só o tom quando ângulo é automático", () => {
+    const block = buildToneAngleBlock("PROVOCADOR", "AUTOMATICO");
+    expect(block).toContain("TOM_E_ANGULO");
+    expect(block.toLowerCase()).toContain("provocad");
+  });
+
+  it("inclui tom e ângulo quando ambos definidos", () => {
+    const block = buildToneAngleBlock("DIDATICO", "PASSO_A_PASSO");
+    expect(block.toLowerCase()).toContain("didát");
+    expect(block.toLowerCase()).toContain("passo");
+  });
+});
+
+describe("buildPrompt tom/ângulo", () => {
+  const base = {
+    theme: "tema",
+    format: "TEXT" as const,
+    platform: "LINKEDIN" as const,
+    objective: "ENSINAR" as const,
+    length: "CURTO" as const,
+  };
+  const profile = { positioningMemory: "memória", ctaPreference: "Comente" } as any;
+
+  it("injeta bloco quando tom != automático", () => {
+    const prompt = buildPrompt({ ...base, tone: "PROVOCADOR", angle: "AUTOMATICO" }, profile);
+    expect(prompt).toContain("TOM_E_ANGULO");
+  });
+
+  it("não injeta bloco quando ambos automáticos", () => {
+    const prompt = buildPrompt({ ...base, tone: "AUTOMATICO", angle: "AUTOMATICO" }, profile);
+    expect(prompt).not.toContain("TOM_E_ANGULO");
   });
 });

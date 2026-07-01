@@ -6,6 +6,8 @@ import {
   DEFAULT_PLATFORM,
   DEFAULT_POST_LENGTH,
   DEFAULT_POST_OBJECTIVE,
+  DEFAULT_TONE,
+  DEFAULT_ANGLE,
   getPostCharacterRange,
   platformSchema,
   type CharacterRange,
@@ -14,6 +16,8 @@ import {
   type PostLength,
   postObjectiveSchema,
   type PostObjective,
+  toneSchema,
+  angleSchema,
 } from "@/domain/generate";
 import { getPositioningProfile } from "@/features/positioning/positioning.repository";
 import { requireUser } from "@/infra/auth/require-user";
@@ -68,6 +72,8 @@ const generatePostsActionSchema = z.object({
   platform: platformSchema.default(DEFAULT_PLATFORM),
   objective: postObjectiveSchema.default(DEFAULT_POST_OBJECTIVE),
   length: postLengthSchema.default(DEFAULT_POST_LENGTH),
+  tone: toneSchema.default(DEFAULT_TONE),
+  angle: angleSchema.default(DEFAULT_ANGLE),
 });
 
 type GenerateActionInput = z.input<typeof generatePostsActionSchema>;
