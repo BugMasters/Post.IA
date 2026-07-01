@@ -1,5 +1,5 @@
 import { LlmProvider } from "./provider";
-import { OllamaProvider } from "./ollama.provider";
+import { GeminiProvider } from "./gemini.provider";
 
 let cachedProvider: LlmProvider | null = null;
 
@@ -8,12 +8,14 @@ export function getLlmProvider(): LlmProvider {
     return cachedProvider;
   }
 
-  const provider = (process.env.LLM_PROVIDER ?? "ollama").trim().toLowerCase();
+  const provider = (process.env.LLM_PROVIDER ?? "gemini").trim().toLowerCase();
 
-  if (provider === "ollama") {
-    cachedProvider = new OllamaProvider();
+  if (provider === "gemini") {
+    cachedProvider = new GeminiProvider();
     return cachedProvider;
   }
 
-  throw new Error(`Provedor LLM desconhecido: ${provider}`);
+  throw new Error(
+    `LLM_PROVIDER invalido: "${provider}". Este projeto aceita apenas "gemini".`
+  );
 }

@@ -1,48 +1,83 @@
 "use server";
 
-import { ensureDevUser } from "@/infra/dev/devUser";
-import { getLatestBriefingForUser } from "@/features/briefing/briefing.repository";
+import { z } from "zod";
+
+import {
+  DEFAULT_PLATFORM,
+  DEFAULT_POST_LENGTH,
+  DEFAULT_POST_OBJECTIVE,
+  DEFAULT_TONE,
+  DEFAULT_ANGLE,
+  getPostCharacterRange,
+  platformSchema,
+  type CharacterRange,
+  type Platform,
+  postLengthSchema,
+  type PostLength,
+  postObjectiveSchema,
+  type PostObjective,
+  toneSchema,
+  angleSchema,
+} from "@/domain/generate";
+import { getPositioningProfile } from "@/features/positioning/positioning.repository";
+import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
+import {
+  LlmProviderError,
+  type LlmProvider,
+  type LlmRequestOptions,
+} from "@/infra/llm/provider";
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
-import type { LlmProvider } from "@/infra/llm/provider";
+import { savePost } from "@/features/posts/posts.repository";
+import { listPositiveExamples } from "@/features/feedback/feedback.repository";
+import {
+  EXPECTED_VARIANT_LABELS,
+  FORMAT_DESCRIPTIONS,
+  buildPrompt,
+  buildPlatformBlock,
+  buildObjectiveBlock,
+  buildLengthBlock,
+} from "./generate.prompt";
 
 export type GeneratePostFormat = "TEXT" | "PHOTO_TEXT" | "PHOTO";
 
-type BriefingRecord = NonNullable<Awaited<ReturnType<typeof getLatestBriefingForUser>>>;
-
-const EXPECTED_VARIANT_LABELS = [
-  "Direto",
-  "Storytelling",
-  "Engraçado",
-  "Autoridade",
-  "Técnico",
-  "Empático",
-] as const;
-
-const FORMAT_DESCRIPTIONS: Record<GeneratePostFormat, string> = {
-  TEXT: "texto enxuto pronto para publicação em feed ou thread",
-  PHOTO_TEXT: "legenda que acompanha imagem marcante com contexto claro",
-  PHOTO: "foco na imagem, frase curta e impacto visual",
+const DEFAULT_SERVER_ERROR_MESSAGE =
+  "Não foi possível gerar variações no momento.";
+const PARSE_RETRY_ERROR_MESSAGE =
+  "Não foi possível gerar variações. Tente novamente.";
+// Orcamento cobre as 6 variacoes inteiras (nao por-variante). Cada variacao
+// pode ter ~1 token a cada 3 caracteres em portugues; 6x o limite alto + JSON.
+const LENGTH_REQUEST_OPTIONS: Record<
+  PostLength,
+  { maxTokens: number; timeoutMs: number }
+> = {
+  CURTO: { maxTokens: 2048, timeoutMs: 60000 },
+  MEDIO: { maxTokens: 4096, timeoutMs: 90000 },
+  LONGO: { maxTokens: 8192, timeoutMs: 120000 },
 };
-
-const AUDIENCE_LEVEL_GUIDANCE: Record<string, string> = {
-  Leigo: "use analogias do cotidiano, explique ideias simples e evite termos técnicos demais",
-  Intermediário:
-    "combina contexto estratégico com termos reconhecíveis para quem já vive as dores do profissional",
-  Técnico:
-    "apresente termos precisos, referências práticas e passos objetivos sem perder a clareza",
+const INSTAGRAM_TOKEN_REDUCTION_FACTOR = 0.85;
+const FEW_SHOT_LIMIT = 3;
+const EXPANSION_REQUEST_OPTIONS: LlmRequestOptions = {
+  maxTokens: 1024,
+  timeoutMs: 60000,
 };
+const generatePostFormatOptions = ["TEXT", "PHOTO_TEXT", "PHOTO"] as const;
 
-const BASE_AVOIDANCES = [
-  "Jargão",
-  "Textão",
-  "Polêmica",
-  "Coach vibes",
-  "CTA agressivo",
-];
+const generatePostsActionSchema = z.object({
+  theme: z
+    .string()
+    .trim()
+    .min(3, "Informe um tema com pelo menos 3 caracteres."),
+  format: z.enum(generatePostFormatOptions),
+  platform: platformSchema.default(DEFAULT_PLATFORM),
+  objective: postObjectiveSchema.default(DEFAULT_POST_OBJECTIVE),
+  length: postLengthSchema.default(DEFAULT_POST_LENGTH),
+  tone: toneSchema.default(DEFAULT_TONE),
+  angle: angleSchema.default(DEFAULT_ANGLE),
+});
 
-const DEFAULT_SERVER_ERROR_MESSAGE = "Não foi possível gerar variações no momento.";
-const PARSE_RETRY_ERROR_MESSAGE = "Não foi possível gerar variações. Tente novamente.";
+type GenerateActionInput = z.input<typeof generatePostsActionSchema>;
+type GenerateActionData = z.output<typeof generatePostsActionSchema>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -57,7 +92,9 @@ const cleanupResponseText = (raw: string) =>
   raw
     .replace(/```(?:json)?/gi, "")
     .trim()
-    .replace(/^\u200B+|\u200B+$/g, "");
+    .replace(/^\u200b+|\u200b+$/g, "");
+
+const countCharacters = (content: string) => content.trim().length;
 
 class VariantParseError extends Error {}
 
@@ -99,7 +136,9 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
 
   const rawVariants = payload.variants;
   if (!Array.isArray(rawVariants)) {
-    throw new VariantParseError("Formato inválido: variants ausente ou malformado.");
+    throw new VariantParseError(
+      "Formato inválido: variants ausente ou malformado."
+    );
   }
 
   if (rawVariants.length !== EXPECTED_VARIANT_LABELS.length) {
@@ -112,7 +151,9 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
 
   rawVariants.forEach((item, index) => {
     if (!isRecord(item)) {
-      throw new VariantParseError(`Formato inválido: variante ${index + 1} não é um objeto.`);
+      throw new VariantParseError(
+        `Formato inválido: variante ${index + 1} não é um objeto.`
+      );
     }
 
     const rawLabel = typeof item.label === "string" ? item.label.trim() : "";
@@ -122,7 +163,8 @@ const buildVariantList = (payload: unknown): GenerateVariant[] => {
       );
     }
 
-    const rawContent = typeof item.content === "string" ? item.content.trim() : "";
+    const rawContent =
+      typeof item.content === "string" ? item.content.trim() : "";
     if (!rawContent) {
       throw new VariantParseError(
         `Formato inválido: o conteúdo da variação "${rawLabel}" não pode estar vazio.`
@@ -169,117 +211,234 @@ const parseStrictVariants = (raw: string) => {
   return buildVariantList(payload);
 };
 
-const gatherResponseText = async (provider: LlmProvider, prompt: string) => {
-  return provider.generateText(prompt);
+const getGenerationRequestOptions = (
+  platform: Platform,
+  length: PostLength
+): LlmRequestOptions => {
+  const requestOptions = LENGTH_REQUEST_OPTIONS[length];
+
+  if (platform !== "INSTAGRAM") {
+    return requestOptions;
+  }
+
+  return {
+    ...requestOptions,
+    maxTokens: Math.max(
+      1,
+      Math.floor(requestOptions.maxTokens * INSTAGRAM_TOKEN_REDUCTION_FACTOR)
+    ),
+  };
 };
 
-const buildPrompt = (
-  theme: string,
-  format: GeneratePostFormat,
-  briefing: BriefingRecord
+const gatherResponseText = async (
+  provider: LlmProvider,
+  prompt: string,
+  requestOptions?: LlmRequestOptions
 ) => {
-  const goal = safeField(briefing.goal, "objetivo principal do briefing");
-  const offer = safeField(briefing.offer, "oferta principal");
-  const differentiation = safeField(
-    briefing.differentiation,
-    "diferencial principal"
-  );
-  const audience = safeField(briefing.audience, "público-alvo não informado");
-  const audienceLevel = safeField(briefing.audienceLevel, "Intermediário");
-  const tone = briefing.tone?.length ? briefing.tone.join(", ") : "neutro";
-  const cta = safeField(briefing.cta, "CTA respeitosa");
-
-  const audienceGuidance =
-    AUDIENCE_LEVEL_GUIDANCE[audienceLevel] ??
-    "Equilibre clareza e autoridade conforme o contexto.";
-
-  const avoidList = Array.from(
-    new Set([
-      ...(Array.isArray(briefing.avoid) ? briefing.avoid : []),
-      ...BASE_AVOIDANCES,
-    ])
-  );
-  const avoidSummary = avoidList.length ? avoidList.join(", ") : "nenhum";
-
-  const contextSummary = `Objetivo "${goal}", oferta "${offer}", diferencial "${differentiation}", público "${audience}" (${audienceLevel}).`;
-  const toneInstruction = `Tons preferidos: ${tone}. ${audienceGuidance}.`;
-
-  return [
-    "Você é um redator experiente focado em redes sociais B2B/B2C.",
-    "Use apenas os dados abaixo como contexto e não repita os nomes dos campos do briefing nos textos finais.",
-    `Tema base: ${theme}`,
-    `Formato solicitado: ${FORMAT_DESCRIPTIONS[format]}`,
-    `Contexto: ${contextSummary}`,
-    toneInstruction,
-    `Evite: ${avoidSummary}.`,
-    `Labels exigidos: ${EXPECTED_VARIANT_LABELS.join(", ")}. Mantenha essa ordem.`,
-    "Retorne APENAS JSON válido com estrutura { \"variants\": [ { \"label\": \"...\", \"content\": \"...\" }, ... ] }.",
-    "Cada post deve ser em português, pronto para publicação, com no máximo 900 caracteres, primeira linha gancho forte, seguida de 3 bullets (um por linha) e CTA final.",
-    `A última linha deve repetir exatamente o CTA sugerido: ${cta}.`,
-    "Não invente dados, não use clichês como \"transforme sua vida\" ou \"ninguém te conta\", nem texto longo, jargões, coach vibes, polêmica ou CTA agressivo.",
-    "O conteúdo deve evitar mencionar diretamente os campos do briefing e não pode trazer claims não fornecidas.",
-    "O gancho, bullets e CTA não podem usar clichês, textão ou figuras de autoridade exageradas.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  return provider.generateText(prompt, requestOptions);
 };
 
-export async function generatePostsAction(input: {
-  theme: string;
-  format: GeneratePostFormat;
-}): Promise<GenerateResult> {
-  const trimmedTheme = input.theme?.trim() ?? "";
+const buildVariantExpansionPrompt = ({
+  input,
+  cta,
+  label,
+  content,
+  characterRange,
+}: {
+  input: GenerateActionData;
+  cta: string;
+  label: string;
+  content: string;
+  characterRange: CharacterRange;
+}) =>
+  [
+    "Você vai reescrever apenas uma variação para expandir o texto sem mudar o ângulo central.",
+    `Tema base: ${input.theme}`,
+    `Formato solicitado: ${FORMAT_DESCRIPTIONS[input.format]}`,
+    buildPlatformBlock(input.platform),
+    buildObjectiveBlock(input.objective),
+    buildLengthBlock(input.platform, input.length),
+    `Label da variação: ${label}`,
+    `Faixa obrigatória: ${characterRange.min}-${characterRange.max} caracteres.`,
+    `CTA final obrigatório: ${cta}.`,
+    "Mantenha o texto em português, pronto para publicação e fiel ao posicionamento.",
+    "Retorne APENAS o texto final da variação, sem JSON, sem comentários e sem título extra.",
+    "[CURRENT_VARIANT]",
+    content,
+    "[/CURRENT_VARIANT]",
+  ].join("\n");
 
-  if (trimmedTheme.length < 3) {
+const expandShortVariants = async ({
+  variants,
+  provider,
+  input,
+  cta,
+}: {
+  variants: GenerateVariant[];
+  provider: LlmProvider;
+  input: GenerateActionData;
+  cta: string;
+}) => {
+  const characterRange = getPostCharacterRange(input.platform, input.length);
+
+  return Promise.all(
+    variants.map(async (variant) => {
+      const originalLength = countCharacters(variant.content);
+
+      if (originalLength >= characterRange.min) {
+        return variant;
+      }
+
+      try {
+        const expandedContent = cleanupResponseText(
+          await gatherResponseText(
+            provider,
+            buildVariantExpansionPrompt({
+              input,
+              cta,
+              label: variant.label,
+              content: variant.content,
+              characterRange,
+            }),
+            EXPANSION_REQUEST_OPTIONS
+          )
+        );
+
+        if (!expandedContent) {
+          return variant;
+        }
+
+        return countCharacters(expandedContent) >= originalLength
+          ? { ...variant, content: expandedContent }
+          : variant;
+      } catch (error) {
+        console.error(
+          `[generatePostsAction] erro ao expandir a variação "${variant.label}":`,
+          error
+        );
+        return variant;
+      }
+    })
+  );
+};
+
+export async function generatePostsAction(
+  input: GenerateActionInput
+): Promise<GenerateResult> {
+  const parsedInput = generatePostsActionSchema.safeParse(input);
+
+  if (!parsedInput.success) {
     return {
       ok: false,
-      error: "Informe um tema com pelo menos 3 caracteres.",
+      error:
+        parsedInput.error.flatten().fieldErrors.theme?.[0] ??
+        "Não foi possível validar os dados da geração.",
     };
   }
 
-  const user = await ensureDevUser();
-  const briefing = await getLatestBriefingForUser(user.id);
+  const validatedInput = parsedInput.data;
+  const user = await requireUser();
+  const profile = await getPositioningProfile(user.id);
 
-  if (!briefing) {
+  if (!profile) {
     return {
       ok: false,
-      error: "Salve um briefing antes de gerar os posts.",
+      error: "Conclua seu onboarding antes de gerar posts.",
     };
+  }
+
+  let examples: Awaited<ReturnType<typeof listPositiveExamples>> = [];
+  try {
+    examples = await listPositiveExamples(user.id, FEW_SHOT_LIMIT);
+  } catch (error) {
+    console.error("[generatePostsAction] falha ao buscar exemplos few-shot:", error);
   }
 
   const provider = getLlmProvider();
-  const prompt = buildPrompt(trimmedTheme, input.format, briefing);
+  const prompt = buildPrompt(validatedInput, profile, examples);
+  const cta = safeField(profile.ctaPreference, "CTA respeitosa");
+  const generationRequestOptions = getGenerationRequestOptions(
+    validatedInput.platform,
+    validatedInput.length
+  );
 
   const runPrompt = async (promptToSend: string) => {
-    const rawResponse = await gatherResponseText(provider, promptToSend);
+    const rawResponse = await gatherResponseText(
+      provider,
+      promptToSend,
+      generationRequestOptions
+    );
     return parseStrictVariants(rawResponse);
   };
 
   try {
     const variants = await runPrompt(prompt);
-    return { ok: true, variants };
+    const qualityCheckedVariants = await expandShortVariants({
+      variants,
+      provider,
+      input: validatedInput,
+      cta,
+    });
+    const saved = await savePost(user.id, {
+      theme: validatedInput.theme,
+      platform: validatedInput.platform,
+      length: validatedInput.length,
+      objective: validatedInput.objective,
+      variants: qualityCheckedVariants,
+    });
+    return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
   } catch (error) {
     if (error instanceof VariantParseError) {
       const retryPrompt = `${prompt}\n\nRETORNE APENAS JSON.`;
+
       try {
         const variants = await runPrompt(retryPrompt);
-        return { ok: true, variants };
+        const qualityCheckedVariants = await expandShortVariants({
+          variants,
+          provider,
+          input: validatedInput,
+          cta,
+        });
+        const saved = await savePost(user.id, {
+          theme: validatedInput.theme,
+          platform: validatedInput.platform,
+          length: validatedInput.length,
+          objective: validatedInput.objective,
+          variants: qualityCheckedVariants,
+        });
+        return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
       } catch (retryError) {
         if (retryError instanceof VariantParseError) {
           return { ok: false, error: PARSE_RETRY_ERROR_MESSAGE };
         }
+
         const message =
-          retryError instanceof Error ? retryError.message : DEFAULT_SERVER_ERROR_MESSAGE;
+          retryError instanceof Error
+            ? retryError.message
+            : DEFAULT_SERVER_ERROR_MESSAGE;
+        const errorCode =
+          retryError instanceof LlmProviderError ? retryError.code : undefined;
         console.error(
           "[generatePostsAction] erro ao gerar variações no retry:",
           retryError
         );
-        return { ok: false, error: message || DEFAULT_SERVER_ERROR_MESSAGE };
+        return {
+          ok: false,
+          error: message || DEFAULT_SERVER_ERROR_MESSAGE,
+          errorCode,
+        };
       }
     }
 
-    const message = error instanceof Error ? error.message : DEFAULT_SERVER_ERROR_MESSAGE;
+    const message =
+      error instanceof Error ? error.message : DEFAULT_SERVER_ERROR_MESSAGE;
+    const errorCode =
+      error instanceof LlmProviderError ? error.code : undefined;
     console.error("[generatePostsAction] erro ao gerar variações:", error);
-    return { ok: false, error: message || DEFAULT_SERVER_ERROR_MESSAGE };
+    return {
+      ok: false,
+      error: message || DEFAULT_SERVER_ERROR_MESSAGE,
+      errorCode,
+    };
   }
 }

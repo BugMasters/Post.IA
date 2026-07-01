@@ -31,6 +31,8 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
+.env
+.env.*
 .env*
 !.env.example
 
@@ -42,3 +44,6 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
+
+# superpowers subagent-driven scratch (briefs, reports, diffs, ledger)
+.superpowers/
