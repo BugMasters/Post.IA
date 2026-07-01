@@ -92,3 +92,22 @@ describe("buildPrompt tom/ângulo", () => {
     expect(prompt).not.toContain("TOM_E_ANGULO");
   });
 });
+
+import { buildVariantRegenerationPrompt } from "../generate.prompt";
+
+describe("buildVariantRegenerationPrompt", () => {
+  it("inclui label, posicionamento e CTA, e pede nova versão", () => {
+    const prompt = buildVariantRegenerationPrompt({
+      input: { theme: "tema", format: "TEXT", platform: "LINKEDIN", objective: "ENSINAR", length: "CURTO" },
+      profile: { positioningMemory: "memória do usuário" } as any,
+      cta: "Comente aqui",
+      label: "Direto",
+      currentContent: "texto atual",
+    });
+    expect(prompt).toContain("Direto");
+    expect(prompt).toContain("memória do usuário");
+    expect(prompt).toContain("Comente aqui");
+    expect(prompt.toLowerCase()).toContain("nova versão");
+    expect(prompt).toContain("texto atual");
+  });
+});

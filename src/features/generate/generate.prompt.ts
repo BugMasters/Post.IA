@@ -177,6 +177,45 @@ export type GeneratePromptInput = {
   angle: AngleOption;
 };
 
+export function buildVariantRegenerationPrompt({
+  input,
+  profile,
+  cta,
+  label,
+  currentContent,
+}: {
+  input: {
+    theme: string;
+    format: GeneratePostFormat;
+    platform: Platform;
+    objective: PostObjective;
+    length: PostLength;
+  };
+  profile: Pick<PositioningProfile, "positioningMemory">;
+  cta: string;
+  label: string;
+  currentContent: string;
+}) {
+  const characterRange = getPostCharacterRange(input.platform, input.length);
+  return [
+    "Você vai gerar uma NOVA VERSÃO de uma única variação, mantendo o label e o ângulo central, mas com texto novo e diferente do atual.",
+    `Tema base: ${input.theme}`,
+    `Formato solicitado: ${FORMAT_DESCRIPTIONS[input.format]}`,
+    buildPositioningBlock(profile),
+    buildPlatformBlock(input.platform),
+    buildObjectiveBlock(input.objective),
+    buildLengthBlock(input.platform, input.length),
+    `Label da variação: ${label}`,
+    `Faixa obrigatória: ${characterRange.min}-${characterRange.max} caracteres.`,
+    `CTA final obrigatório: ${cta}.`,
+    "Mantenha o texto em português, pronto para publicação e fiel ao posicionamento.",
+    "Retorne APENAS o texto final da variação, sem JSON, sem comentários e sem título extra.",
+    "[VARIACAO_ATUAL]",
+    currentContent,
+    "[/VARIACAO_ATUAL]",
+  ].join("\n");
+}
+
 export const buildPrompt = (
   input: GeneratePromptInput,
   profile: Pick<PositioningProfile, "positioningMemory" | "ctaPreference">,
