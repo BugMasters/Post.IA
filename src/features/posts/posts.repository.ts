@@ -25,3 +25,14 @@ export async function listPosts(userId: string) {
 export async function getPost(userId: string, postId: string) {
   return prisma.post.findFirst({ where: { id: postId, userId } });
 }
+
+export async function updatePostVariants(
+  userId: string,
+  postId: string,
+  variants: GenerateVariant[]
+) {
+  return prisma.post.updateMany({
+    where: { id: postId, userId },
+    data: { variants },
+  });
+}
