@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { buildPositioningBlock, buildFewShotBlock, buildPrompt, buildToneAngleBlock } from "../generate.prompt";
+import {
+  buildPositioningBlock,
+  buildFewShotBlock,
+  buildPrompt,
+  buildToneAngleBlock,
+  buildVariantRegenerationPrompt,
+} from "../generate.prompt";
 
 describe("buildPositioningBlock", () => {
   it("inclui a memória viva", () => {
@@ -92,8 +98,6 @@ describe("buildPrompt tom/ângulo", () => {
     expect(prompt).not.toContain("TOM_E_ANGULO");
   });
 });
-
-import { buildVariantRegenerationPrompt } from "../generate.prompt";
 
 describe("buildVariantRegenerationPrompt", () => {
   it("inclui label, posicionamento e CTA, e pede nova versão", () => {
