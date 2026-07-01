@@ -1,5 +1,7 @@
 "use server";
 
+import { requireUser } from "@/infra/auth/require-user";
+import { getLlmProvider } from "@/infra/llm";
 import type { LlmRequestOptions } from "@/infra/llm/provider";
 import type { GenerateVariant } from "@/infra/llm/types";
 import type {
@@ -7,6 +9,10 @@ import type {
   PostLength,
   PostObjective,
 } from "@/domain/generate";
+import { getPost, updatePostVariants } from "@/features/posts/posts.repository";
+import { getPositioningProfile } from "@/features/positioning/positioning.repository";
+import { buildVariantRegenerationPrompt } from "./generate.prompt";
+import { replaceVariant } from "./regenerate.helpers";
 
 export type RegenerateVariantResult =
   | { ok: true; content: string }
@@ -23,33 +29,11 @@ const cleanText = (raw: string) =>
 const safeField = (value: string | undefined | null, fallback: string) =>
   value?.trim() || fallback;
 
-export function replaceVariant(
-  variants: GenerateVariant[],
-  label: string,
-  content: string
-): GenerateVariant[] {
-  return variants.map((variant) =>
-    variant.label === label ? { ...variant, content } : variant
-  );
-}
-
 export async function regenerateVariantAction(
   postId: string,
   label: string
 ): Promise<RegenerateVariantResult> {
   try {
-    const { requireUser } = await import("@/infra/auth/require-user");
-    const { getLlmProvider } = await import("@/infra/llm");
-    const { getPost, updatePostVariants } = await import(
-      "@/features/posts/posts.repository"
-    );
-    const { getPositioningProfile } = await import(
-      "@/features/positioning/positioning.repository"
-    );
-    const { buildVariantRegenerationPrompt } = await import(
-      "./generate.prompt"
-    );
-
     const user = await requireUser();
     const post = await getPost(user.id, postId);
     if (!post) {

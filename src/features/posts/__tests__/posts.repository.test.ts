@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const create = vi.fn(async ({ data }: any) => ({ id: "p1", ...data }));
 const findMany = vi.fn(async (_arg?: any) => [] as any[]);
-const updateMany = vi.fn(() => Promise.resolve({ count: 1 }));
+const updateMany = vi.fn((_a?: unknown) => Promise.resolve({ count: 1 }));
 vi.mock("@/infra/db/prisma", () => ({
   prisma: {
     post: {
@@ -36,7 +36,7 @@ describe("updatePostVariants", () => {
     const variants = [{ label: "Direto", content: "novo" }];
     await updatePostVariants("u1", "p1", variants);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const arg = (updateMany.mock.calls.at(-1) as [any])[0];
+    const arg = (updateMany.mock.calls.at(-1) as unknown as [any])[0];
     expect(arg.where).toEqual({ id: "p1", userId: "u1" });
     expect(arg.data.variants).toEqual(variants);
   });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { replaceVariant } from "../regenerate.actions";
+import { replaceVariant } from "../regenerate.helpers";
 
 describe("replaceVariant", () => {
   const variants = [
