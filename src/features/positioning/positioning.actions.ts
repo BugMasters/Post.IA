@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/infra/auth/require-user";
 import { positioningPatchSchema } from "@/domain/onboarding";
 import { updatePositioningProfile } from "./positioning.repository";
+import { recordMemoryVersion } from "./memory-version.repository";
 
 export type UpdatePositioningResult =
   | { ok: true }
@@ -17,6 +18,13 @@ export async function updatePositioningProfileAction(
     const parsed = positioningPatchSchema.parse(patch);
     const user = await requireUser();
     await updatePositioningProfile(user.id, parsed);
+    if (parsed.positioningMemory) {
+      try {
+        await recordMemoryVersion(user.id, parsed.positioningMemory, "manual");
+      } catch (versionError) {
+        console.error("[updatePositioningProfileAction] falha ao versionar memória:", versionError);
+      }
+    }
     revalidatePath("/posicionamento");
     return { ok: true };
   } catch (error) {

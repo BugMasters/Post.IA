@@ -14,6 +14,7 @@ import {
 } from "./onboarding.prompts";
 import { getOnboarding, saveOnboarding } from "./onboarding.repository";
 import { upsertPositioningProfile } from "@/features/positioning/positioning.repository";
+import { recordMemoryVersion } from "@/features/positioning/memory-version.repository";
 
 const READY = "[PRONTO]";
 
@@ -79,6 +80,13 @@ export async function finishOnboardingAction(): Promise<FinishResult> {
     const seed = parseSynthesisPayload(raw);
 
     await upsertPositioningProfile(user.id, seed);
+    if (seed.positioningMemory) {
+      try {
+        await recordMemoryVersion(user.id, seed.positioningMemory, "onboarding");
+      } catch (versionError) {
+        console.error("[finishOnboardingAction] falha ao versionar memória:", versionError);
+      }
+    }
     await saveOnboarding(user.id, messages, "completed", existing?.turnCount ?? messages.length);
 
     revalidatePath("/dashboard");

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
 import { getPositioningProfile, updatePositioningMemory } from "./positioning.repository";
+import { recordMemoryVersion } from "./memory-version.repository";
 import { buildRelearnPrompt } from "./relearn.prompts";
 import {
   listUnprocessedFeedback,
@@ -36,6 +37,11 @@ export async function relearnPositioningAction(): Promise<RelearnResult> {
 
     if (newMemory.length > 0) {
       await updatePositioningMemory(user.id, newMemory);
+      try {
+        await recordMemoryVersion(user.id, newMemory, "relearn");
+      } catch (versionError) {
+        console.error("[relearnPositioningAction] falha ao versionar memória:", versionError);
+      }
       await markFeedbackProcessed(feedbacks.map((f) => f.id));
       revalidatePath("/posicionamento");
       return { ok: true, updated: true };
