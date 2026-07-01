@@ -6,6 +6,7 @@ const links = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/generate", label: "Gerar" },
   { href: "/posts", label: "Histórico" },
+  { href: "/rascunhos", label: "Rascunhos" },
   { href: "/posicionamento", label: "Posicionamento" },
 ];
 
