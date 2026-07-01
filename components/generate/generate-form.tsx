@@ -11,9 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import {
+  angleLabels,
+  angleOptions,
+  DEFAULT_ANGLE,
   DEFAULT_PLATFORM,
   DEFAULT_POST_LENGTH,
   DEFAULT_POST_OBJECTIVE,
+  DEFAULT_TONE,
   getPostCharacterRange,
   platformLabels,
   platformOptions,
@@ -21,9 +25,13 @@ import {
   postLengthOptions,
   postObjectiveLabels,
   postObjectiveOptions,
+  toneLabels,
+  toneOptions,
+  type AngleOption,
   type Platform,
   type PostLength,
   type PostObjective,
+  type ToneOption,
 } from "@/domain/generate";
 import { generatePostsAction } from "@/features/generate/generate.actions";
 import type { GeneratePostFormat } from "@/features/generate/generate.actions";
@@ -45,6 +53,8 @@ export default function GenerateForm() {
   const [objective, setObjective] =
     React.useState<PostObjective>(DEFAULT_POST_OBJECTIVE);
   const [length, setLength] = React.useState<PostLength>(DEFAULT_POST_LENGTH);
+  const [tone, setTone] = React.useState<ToneOption>(DEFAULT_TONE);
+  const [angle, setAngle] = React.useState<AngleOption>(DEFAULT_ANGLE);
   const [variants, setVariants] = React.useState<GenerateVariant[]>([]);
   const [postId, setPostId] = React.useState<string | null>(null);
   const [fieldError, setFieldError] = React.useState<string | null>(null);
@@ -82,6 +92,8 @@ export default function GenerateForm() {
         platform,
         objective,
         length,
+        tone,
+        angle,
       });
 
       if (!result.ok) {
@@ -184,6 +196,38 @@ export default function GenerateForm() {
                   {postLengthOptions.map((option) => (
                     <option key={option} value={option}>
                       {postLengthLabels[option]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="tone">Tom</Label>
+                <Select
+                  id="tone"
+                  value={tone}
+                  onChange={(event) => setTone(event.target.value as ToneOption)}
+                >
+                  {toneOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {toneLabels[option]}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="angle">Ângulo</Label>
+                <Select
+                  id="angle"
+                  value={angle}
+                  onChange={(event) => setAngle(event.target.value as AngleOption)}
+                >
+                  {angleOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {angleLabels[option]}
                     </option>
                   ))}
                 </Select>
