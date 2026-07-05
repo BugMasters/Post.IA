@@ -8,7 +8,7 @@ export default async function RascunhosPage() {
 
   return (
     <main className="mx-auto max-w-3xl space-y-6 p-6">
-      <h1 className="text-3xl font-semibold">Rascunhos</h1>
+      <h1 className="font-display text-3xl italic font-medium tracking-tight">Rascunhos</h1>
       <DraftList
         drafts={drafts.map((draft) => ({
           id: draft.id,

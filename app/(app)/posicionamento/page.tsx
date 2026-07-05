@@ -13,7 +13,7 @@ export default async function PosicionamentoPage() {
   if (!profile) {
     return (
       <main className="mx-auto max-w-2xl space-y-4 p-6">
-        <h1 className="text-3xl font-semibold">Posicionamento</h1>
+        <h1 className="font-display text-3xl italic font-medium tracking-tight">Posicionamento</h1>
         <p className="text-sm text-muted-foreground">Conclua seu onboarding primeiro.</p>
         <Button asChild><Link href="/onboarding">Começar</Link></Button>
       </main>
@@ -24,7 +24,7 @@ export default async function PosicionamentoPage() {
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 p-6">
-      <h1 className="text-3xl font-semibold">Seu posicionamento</h1>
+      <h1 className="font-display text-3xl italic font-medium tracking-tight">Seu posicionamento</h1>
       <PositioningEditor
         profile={{
           niche: profile.niche,

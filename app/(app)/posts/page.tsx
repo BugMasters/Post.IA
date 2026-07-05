@@ -9,7 +9,7 @@ export default async function PostsPage() {
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <h1 className="text-3xl font-semibold">Histórico</h1>
+      <h1 className="font-display text-3xl italic font-medium tracking-tight">Histórico</h1>
       {posts.length === 0 ? (
         <p className="text-sm text-muted-foreground">Você ainda não gerou posts.</p>
       ) : (

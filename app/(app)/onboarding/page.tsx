@@ -16,7 +16,7 @@ export default async function OnboardingPage() {
   return (
     <main className="mx-auto max-w-2xl space-y-6 p-6">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold">Vamos te conhecer</h1>
+        <h1 className="font-display text-2xl italic font-medium tracking-tight">Vamos te conhecer</h1>
         <p className="text-sm text-muted-foreground">
           Responda em conversa. No fim, monto seu posicionamento.
         </p>
