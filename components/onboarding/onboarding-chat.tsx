@@ -72,7 +72,7 @@ export default function OnboardingChat({ initialMessages }: { initialMessages: C
         {pending ? <p className="text-sm text-muted-foreground">Pensando...</p> : null}
       </div>
 
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       {done ? (
         <Button onClick={finish} disabled={pending} className="w-full">
