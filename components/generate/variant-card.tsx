@@ -94,7 +94,12 @@ export default function VariantCard({
 
   return (
     <Card>
-      <CardHeader><CardTitle className="text-base">{label}</CardTitle></CardHeader>
+      <CardHeader>
+        {/* Rótulo do ângulo como anotação à caneta. */}
+        <CardTitle className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pen">
+          {label}
+        </CardTitle>
+      </CardHeader>
       <CardContent className="space-y-3">
         {editing ? (
           <Textarea
@@ -106,7 +111,7 @@ export default function VariantCard({
           <p className="whitespace-pre-wrap text-sm">{draft}</p>
         )}
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" disabled={pending} onClick={handleCopyClick}>{copied ? "Copiado" : "Copiar"}</Button>
+          <Button size="sm" variant="outline" disabled={pending} onClick={handleCopyClick} className={copied ? "border-pen text-pen" : undefined}>{copied ? "Copiado" : "Copiar"}</Button>
           {editing ? (
             <>
               <Button size="sm" disabled={pending} onClick={saveEdit}>Salvar edição</Button>
@@ -116,7 +121,7 @@ export default function VariantCard({
             <>
               <Button size="sm" variant="outline" disabled={pending} onClick={() => { setRegenError(null); setEditing(true); }}>Editar</Button>
               <Button size="sm" variant="outline" disabled={pending} onClick={regenerate}>Regenerar</Button>
-              <Button size="sm" variant="outline" disabled={pending} onClick={saveDraft}>{draftSaved ? "Salvo" : "Salvar rascunho"}</Button>
+              <Button size="sm" variant="outline" disabled={pending} onClick={saveDraft} className={draftSaved ? "border-pen text-pen" : undefined}>{draftSaved ? "Salvo" : "Salvar rascunho"}</Button>
             </>
           )}
           <Button size="sm" variant={sent === "liked" ? "default" : "outline"} disabled={pending} onClick={() => react("liked")}>👍</Button>
