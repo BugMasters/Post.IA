@@ -14,9 +14,9 @@ export type UpdatePositioningResult =
 export async function updatePositioningProfileAction(
   patch: unknown
 ): Promise<UpdatePositioningResult> {
+  const user = await requireUser();
   try {
     const parsed = positioningPatchSchema.parse(patch);
-    const user = await requireUser();
     await updatePositioningProfile(user.id, parsed);
     if (parsed.positioningMemory) {
       try {
@@ -31,7 +31,7 @@ export async function updatePositioningProfileAction(
     if (error instanceof ZodError) {
       return { ok: false, error: error.issues.map((i) => i.message).join(", ") };
     }
-    const message = error instanceof Error ? error.message : "Erro ao salvar posicionamento.";
-    return { ok: false, error: message };
+    console.error("[updatePositioningProfileAction] erro ao salvar posicionamento:", error);
+    return { ok: false, error: "Não foi possível salvar o posicionamento." };
   }
 }

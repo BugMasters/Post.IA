@@ -16,8 +16,8 @@ export type RelearnResult =
   | { ok: false; error: string };
 
 export async function relearnPositioningAction(): Promise<RelearnResult> {
+  const user = await requireUser();
   try {
-    const user = await requireUser();
     const [profile, feedbacks] = await Promise.all([
       getPositioningProfile(user.id),
       listUnprocessedFeedback(user.id),
@@ -42,13 +42,13 @@ export async function relearnPositioningAction(): Promise<RelearnResult> {
       } catch (versionError) {
         console.error("[relearnPositioningAction] falha ao versionar memória:", versionError);
       }
-      await markFeedbackProcessed(feedbacks.map((f) => f.id));
+      await markFeedbackProcessed(user.id, feedbacks.map((f) => f.id));
       revalidatePath("/posicionamento");
       return { ok: true, updated: true };
     }
     return { ok: true, updated: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao reaprender.";
-    return { ok: false, error: message };
+    console.error("[relearnPositioningAction] erro ao reaprender:", error);
+    return { ok: false, error: "Não foi possível atualizar a memória agora." };
   }
 }

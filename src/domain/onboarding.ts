@@ -9,6 +9,18 @@ export const chatMessageSchema = z.object({
 export const chatMessagesSchema = z.array(chatMessageSchema);
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 
+export const ONBOARDING_MESSAGE_MAX = 2000;
+
+// Mensagem digitada pelo usuário no chat de onboarding. Vazia é permitida
+// (dispara a primeira pergunta); o teto evita payloads gigantes no banco/LLM.
+export const onboardingMessageSchema = z
+  .string()
+  .trim()
+  .max(
+    ONBOARDING_MESSAGE_MAX,
+    `A mensagem pode ter no máximo ${ONBOARDING_MESSAGE_MAX} caracteres.`
+  );
+
 export const positioningSeedSchema = z.object({
   niche: z.string().default(""),
   audience: z.string().default(""),
