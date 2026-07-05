@@ -1,10 +1,12 @@
 "use server";
 
+import { ZodError } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
 import {
   MAX_ONBOARDING_TURNS,
+  onboardingMessageSchema,
   type ChatMessage,
 } from "@/domain/onboarding";
 import {
@@ -14,6 +16,7 @@ import {
 } from "./onboarding.prompts";
 import { getOnboarding, saveOnboarding } from "./onboarding.repository";
 import { upsertPositioningProfile } from "@/features/positioning/positioning.repository";
+import { recordMemoryVersion } from "@/features/positioning/memory-version.repository";
 
 const READY = "[PRONTO]";
 
@@ -22,16 +25,17 @@ export type AdvanceResult =
   | { ok: false; error: string };
 
 export async function advanceOnboardingAction(userMessage: string): Promise<AdvanceResult> {
+  const user = await requireUser();
   try {
-    const user = await requireUser();
+    const message = onboardingMessageSchema.parse(userMessage);
     const existing = await getOnboarding(user.id);
     const history: ChatMessage[] = (existing?.messages as ChatMessage[] | undefined) ?? [];
 
-    const messages: ChatMessage[] = userMessage.trim()
-      ? [...history, { role: "user", content: userMessage.trim() }]
+    const messages: ChatMessage[] = message
+      ? [...history, { role: "user", content: message }]
       : history;
 
-    const turnCount = (existing?.turnCount ?? 0) + (userMessage.trim() ? 1 : 0);
+    const turnCount = (existing?.turnCount ?? 0) + (message ? 1 : 0);
 
     if (turnCount >= MAX_ONBOARDING_TURNS) {
       await saveOnboarding(user.id, messages, "in_progress", turnCount);
@@ -55,16 +59,19 @@ export async function advanceOnboardingAction(userMessage: string): Promise<Adva
     await saveOnboarding(user.id, withQuestion, "in_progress", turnCount);
     return { ok: true, done: false, question: raw };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro no onboarding.";
-    return { ok: false, error: message };
+    if (error instanceof ZodError) {
+      return { ok: false, error: error.issues.map((i) => i.message).join(", ") };
+    }
+    console.error("[advanceOnboardingAction] erro no onboarding:", error);
+    return { ok: false, error: "Não foi possível continuar o onboarding." };
   }
 }
 
 export type FinishResult = { ok: true } | { ok: false; error: string };
 
 export async function finishOnboardingAction(): Promise<FinishResult> {
+  const user = await requireUser();
   try {
-    const user = await requireUser();
     const existing = await getOnboarding(user.id);
     const messages = (existing?.messages as ChatMessage[] | undefined) ?? [];
     if (messages.length === 0) {
@@ -79,13 +86,20 @@ export async function finishOnboardingAction(): Promise<FinishResult> {
     const seed = parseSynthesisPayload(raw);
 
     await upsertPositioningProfile(user.id, seed);
+    if (seed.positioningMemory) {
+      try {
+        await recordMemoryVersion(user.id, seed.positioningMemory, "onboarding");
+      } catch (versionError) {
+        console.error("[finishOnboardingAction] falha ao versionar memória:", versionError);
+      }
+    }
     await saveOnboarding(user.id, messages, "completed", existing?.turnCount ?? messages.length);
 
     revalidatePath("/dashboard");
     revalidatePath("/posicionamento");
     return { ok: true };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao concluir onboarding.";
-    return { ok: false, error: message };
+    console.error("[finishOnboardingAction] erro ao concluir onboarding:", error);
+    return { ok: false, error: "Não foi possível concluir o onboarding." };
   }
 }

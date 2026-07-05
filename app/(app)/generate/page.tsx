@@ -20,7 +20,7 @@ export default async function GeneratePage() {
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="space-y-1">
-        <h1 className="text-3xl font-semibold">Gerar posts</h1>
+        <h1 className="font-display text-3xl italic font-medium tracking-tight">Gerar posts</h1>
         <p className="text-sm text-muted-foreground">
           Crie variações de post alinhadas ao seu posicionamento.
         </p>

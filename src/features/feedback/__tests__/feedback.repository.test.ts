@@ -2,11 +2,22 @@ import { describe, it, expect, vi } from "vitest";
 
 const create = vi.fn((_a: unknown) => Promise.resolve({ id: "f1" }));
 const count = vi.fn((_a: unknown) => Promise.resolve(2));
+const updateMany = vi.fn((_a: unknown) => Promise.resolve({ count: 2 }));
 vi.mock("@/infra/db/prisma", () => ({
-  prisma: { postFeedback: { create: (a: unknown) => create(a), count: (a: unknown) => count(a) } },
+  prisma: {
+    postFeedback: {
+      create: (a: unknown) => create(a),
+      count: (a: unknown) => count(a),
+      updateMany: (a: unknown) => updateMany(a),
+    },
+  },
 }));
 
-import { recordFeedback, countUnprocessedFeedback } from "../feedback.repository";
+import {
+  recordFeedback,
+  countUnprocessedFeedback,
+  markFeedbackProcessed,
+} from "../feedback.repository";
 
 describe("feedback.repository", () => {
   it("grava feedback com userId", async () => {
@@ -23,5 +34,13 @@ describe("feedback.repository", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const arg = (count.mock.calls[0] as [any])[0];
     expect(arg.where).toEqual({ userId: "u1", processed: false });
+  });
+
+  it("marca processados escopando por userId", async () => {
+    await markFeedbackProcessed("u1", ["f1", "f2"]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const arg = (updateMany.mock.calls[0] as [any])[0];
+    expect(arg.where).toEqual({ id: { in: ["f1", "f2"] }, userId: "u1" });
+    expect(arg.data).toEqual({ processed: true });
   });
 });

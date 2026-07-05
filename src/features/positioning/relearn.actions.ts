@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/infra/auth/require-user";
 import { getLlmProvider } from "@/infra/llm";
 import { getPositioningProfile, updatePositioningMemory } from "./positioning.repository";
+import { recordMemoryVersion } from "./memory-version.repository";
 import { buildRelearnPrompt } from "./relearn.prompts";
 import {
   listUnprocessedFeedback,
@@ -15,8 +16,8 @@ export type RelearnResult =
   | { ok: false; error: string };
 
 export async function relearnPositioningAction(): Promise<RelearnResult> {
+  const user = await requireUser();
   try {
-    const user = await requireUser();
     const [profile, feedbacks] = await Promise.all([
       getPositioningProfile(user.id),
       listUnprocessedFeedback(user.id),
@@ -36,13 +37,18 @@ export async function relearnPositioningAction(): Promise<RelearnResult> {
 
     if (newMemory.length > 0) {
       await updatePositioningMemory(user.id, newMemory);
-      await markFeedbackProcessed(feedbacks.map((f) => f.id));
+      try {
+        await recordMemoryVersion(user.id, newMemory, "relearn");
+      } catch (versionError) {
+        console.error("[relearnPositioningAction] falha ao versionar memória:", versionError);
+      }
+      await markFeedbackProcessed(user.id, feedbacks.map((f) => f.id));
       revalidatePath("/posicionamento");
       return { ok: true, updated: true };
     }
     return { ok: true, updated: false };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Erro ao reaprender.";
-    return { ok: false, error: message };
+    console.error("[relearnPositioningAction] erro ao reaprender:", error);
+    return { ok: false, error: "Não foi possível atualizar a memória agora." };
   }
 }

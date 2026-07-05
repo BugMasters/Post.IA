@@ -26,7 +26,7 @@ export default function WaitlistForm() {
 
   if (done) {
     return (
-      <p className="text-sm text-green-600">
+      <p className="text-sm text-pen">
         Pronto! Te aviso quando abrir.
       </p>
     );
@@ -46,7 +46,7 @@ export default function WaitlistForm() {
           {pending ? "..." : "Entrar na lista"}
         </Button>
       </div>
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
     </form>
   );
 }

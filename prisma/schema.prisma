@@ -22,10 +22,12 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  positioning  PositioningProfile?
-  onboarding   OnboardingConversation?
-  posts        Post[]
-  feedbacks    PostFeedback[]
+  positioning    PositioningProfile?
+  onboarding     OnboardingConversation?
+  posts          Post[]
+  feedbacks      PostFeedback[]
+  drafts         Draft[]
+  memoryVersions PositioningMemoryVersion[]
 }
 
 model PositioningProfile {
@@ -93,4 +95,31 @@ model WaitlistEntry {
   id        String   @id @default(cuid())
   email     String   @unique
   createdAt DateTime @default(now())
+}
+
+model Draft {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String?
+  label     String
+  content   String
+  theme     String?
+  platform  String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PositioningMemoryVersion {
+  id        String   @id @default(cuid())
+  userId    String
+  memory    String
+  source    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

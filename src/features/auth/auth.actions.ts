@@ -15,7 +15,12 @@ export async function signupAction(values: SignupValues): Promise<SignupResult> 
     if (error instanceof ZodError) {
       return { ok: false, error: error.issues.map((i) => i.message).join(", ") };
     }
-    const message = error instanceof Error ? error.message : "Erro ao cadastrar.";
-    return { ok: false, error: message };
+    // Único erro de negócio esperado; qualquer outro vira mensagem genérica
+    // para não vazar detalhes internos (Prisma, conexão, etc.).
+    if (error instanceof Error && error.message === "Email já cadastrado.") {
+      return { ok: false, error: error.message };
+    }
+    console.error("[signupAction] erro ao cadastrar:", error);
+    return { ok: false, error: "Não foi possível criar a conta." };
   }
 }

@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <div className="space-y-1">
-        <h1 className="text-3xl font-semibold text-foreground">Dashboard</h1>
+        <h1 className="font-display text-3xl italic font-medium tracking-tight text-foreground">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
           Veja seu posicionamento e comece a gerar posts.
         </p>
