@@ -27,4 +27,10 @@ describe("draftInputSchema", () => {
   it("rejeita label vazio", () => {
     expect(() => draftInputSchema.parse({ label: "", content: "x" })).toThrowError(ZodError);
   });
+
+  it("rejeita content acima de 5000 caracteres", () => {
+    expect(() =>
+      draftInputSchema.parse({ label: "Direto", content: "x".repeat(5001) })
+    ).toThrowError(ZodError);
+  });
 });

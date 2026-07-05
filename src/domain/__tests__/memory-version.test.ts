@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ZodError } from "zod";
 import { memorySourceSchema } from "../memory-version";
 
 describe("memorySourceSchema", () => {
@@ -9,6 +10,6 @@ describe("memorySourceSchema", () => {
   });
 
   it("rejeita origem inválida", () => {
-    expect(() => memorySourceSchema.parse("xpto")).toThrow();
+    expect(() => memorySourceSchema.parse("xpto")).toThrowError(ZodError);
   });
 });
