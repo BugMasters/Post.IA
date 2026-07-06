@@ -51,6 +51,10 @@ export default function SignupForm() {
         <Label htmlFor="password">Senha</Label>
         <Input id="password" name="password" type="password" minLength={8} required />
       </div>
+      <div className="space-y-1">
+        <Label htmlFor="inviteCode">Código de convite</Label>
+        <Input id="inviteCode" name="inviteCode" required />
+      </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Criando..." : "Criar conta"}
