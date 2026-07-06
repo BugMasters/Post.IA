@@ -18,10 +18,11 @@ export default function SignupForm() {
     const name = String(formData.get("name") ?? "");
     const email = String(formData.get("email") ?? "");
     const password = String(formData.get("password") ?? "");
+    const inviteCode = String(formData.get("inviteCode") ?? "");
 
     startTransition(async () => {
       setError(null);
-      const result = await signupAction({ name, email, password });
+      const result = await signupAction({ name, email, password, inviteCode });
       if (!result.ok) {
         setError(result.error);
         return;

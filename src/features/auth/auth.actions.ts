@@ -9,15 +9,24 @@ export type SignupResult = { ok: true } | { ok: false; error: string };
 export async function signupAction(values: SignupValues): Promise<SignupResult> {
   try {
     const input = signupSchema.parse(values);
-    await createUserWithPassword(input.email, input.password, input.name);
+    await createUserWithPassword(
+      input.email,
+      input.password,
+      input.inviteCode,
+      input.name
+    );
     return { ok: true };
   } catch (error) {
     if (error instanceof ZodError) {
       return { ok: false, error: error.issues.map((i) => i.message).join(", ") };
     }
-    // Único erro de negócio esperado; qualquer outro vira mensagem genérica
+    // Erros de negócio esperados; qualquer outro vira mensagem genérica
     // para não vazar detalhes internos (Prisma, conexão, etc.).
-    if (error instanceof Error && error.message === "Email já cadastrado.") {
+    const KNOWN_BUSINESS_ERRORS = [
+      "Email já cadastrado.",
+      "Código de convite inválido.",
+    ];
+    if (error instanceof Error && KNOWN_BUSINESS_ERRORS.includes(error.message)) {
       return { ok: false, error: error.message };
     }
     console.error("[signupAction] erro ao cadastrar:", error);
