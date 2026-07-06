@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "prisma:generate": "prisma generate",
+    "postinstall": "prisma generate",
     "test": "vitest run",
     "test:watch": "vitest"
   },
