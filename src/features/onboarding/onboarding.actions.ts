@@ -17,8 +17,17 @@ import {
 import { getOnboarding, saveOnboarding } from "./onboarding.repository";
 import { upsertPositioningProfile } from "@/features/positioning/positioning.repository";
 import { recordMemoryVersion } from "@/features/positioning/memory-version.repository";
+import { recordUsage } from "@/features/usage/usage.repository";
 
 const READY = "[PRONTO]";
+
+const recordOnboardingUsage = async (userId: string, durationMs: number) => {
+  try {
+    await recordUsage(userId, "onboarding", durationMs);
+  } catch (usageError) {
+    console.error("[onboarding] falha ao registrar uso:", usageError);
+  }
+};
 
 export type AdvanceResult =
   | { ok: true; done: boolean; question?: string }
@@ -43,10 +52,12 @@ export async function advanceOnboardingAction(userMessage: string): Promise<Adva
     }
 
     const provider = getLlmProvider();
+    const llmStartedAt = Date.now();
     const rawResponse = (await provider.generateText(buildNextQuestionPrompt(messages), {
       maxTokens: 256,
       timeoutMs: 30000,
     })).trim();
+    await recordOnboardingUsage(user.id, Date.now() - llmStartedAt);
     // o modelo as vezes ecoa o rotulo do papel ("ENTREVISTADOR:") do historico.
     const raw = rawResponse.replace(/^(ENTREVISTADOR|EXPERT)\s*:\s*/i, "").trim();
 
@@ -79,10 +90,12 @@ export async function finishOnboardingAction(): Promise<FinishResult> {
     }
 
     const provider = getLlmProvider();
+    const llmStartedAt = Date.now();
     const raw = await provider.generateText(buildMemorySynthesisPrompt(messages), {
       maxTokens: 700,
       timeoutMs: 60000,
     });
+    await recordOnboardingUsage(user.id, Date.now() - llmStartedAt);
     const seed = parseSynthesisPayload(raw);
 
     await upsertPositioningProfile(user.id, seed);

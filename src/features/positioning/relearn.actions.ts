@@ -10,6 +10,7 @@ import {
   listUnprocessedFeedback,
   markFeedbackProcessed,
 } from "@/features/feedback/feedback.repository";
+import { recordUsage } from "@/features/usage/usage.repository";
 
 export type RelearnResult =
   | { ok: true; updated: boolean }
@@ -28,12 +29,18 @@ export async function relearnPositioningAction(): Promise<RelearnResult> {
     }
 
     const provider = getLlmProvider();
+    const llmStartedAt = Date.now();
     const newMemory = (
       await provider.generateText(buildRelearnPrompt(profile.positioningMemory, feedbacks), {
         maxTokens: 700,
         timeoutMs: 60000,
       })
     ).trim();
+    try {
+      await recordUsage(user.id, "relearn", Date.now() - llmStartedAt);
+    } catch (usageError) {
+      console.error("[relearnPositioningAction] falha ao registrar uso:", usageError);
+    }
 
     if (newMemory.length > 0) {
       await updatePositioningMemory(user.id, newMemory);
