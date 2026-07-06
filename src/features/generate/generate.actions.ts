@@ -30,6 +30,7 @@ import {
 import type { GenerateResult, GenerateVariant } from "@/infra/llm/types";
 import { savePost } from "@/features/posts/posts.repository";
 import { listPositiveExamples } from "@/features/feedback/feedback.repository";
+import { getQuotaStatus, recordUsage } from "@/features/usage/usage.repository";
 import {
   EXPECTED_VARIANT_LABELS,
   FORMAT_DESCRIPTIONS,
@@ -45,6 +46,8 @@ const DEFAULT_SERVER_ERROR_MESSAGE =
   "Não foi possível gerar variações no momento.";
 const PARSE_RETRY_ERROR_MESSAGE =
   "Não foi possível gerar variações. Tente novamente.";
+const QUOTA_EXCEEDED_MESSAGE =
+  "Você atingiu o limite diário de gerações. Volte amanhã.";
 // Orcamento cobre as 6 variacoes inteiras (nao por-variante). Cada variacao
 // pode ter ~1 token a cada 3 caracteres em portugues; 6x o limite alto + JSON.
 const LENGTH_REQUEST_OPTIONS: Record<
@@ -338,6 +341,12 @@ export async function generatePostsAction(
 
   const validatedInput = parsedInput.data;
   const user = await requireUser();
+
+  const quota = await getQuotaStatus(user.id, "generate");
+  if (quota.remaining <= 0) {
+    return { ok: false, error: QUOTA_EXCEEDED_MESSAGE };
+  }
+
   const profile = await getPositioningProfile(user.id);
 
   if (!profile) {
@@ -361,6 +370,18 @@ export async function generatePostsAction(
     validatedInput.platform,
     validatedInput.length
   );
+
+  const startedAt = Date.now();
+  const recordGenerationUsage = async () => {
+    try {
+      await recordUsage(user.id, "generate", Date.now() - startedAt);
+    } catch (usageError) {
+      console.error(
+        "[generatePostsAction] falha ao registrar uso:",
+        usageError
+      );
+    }
+  };
 
   const runPrompt = async (promptToSend: string) => {
     const rawResponse = await gatherResponseText(
@@ -386,6 +407,7 @@ export async function generatePostsAction(
       objective: validatedInput.objective,
       variants: qualityCheckedVariants,
     });
+    await recordGenerationUsage();
     return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
   } catch (error) {
     if (error instanceof VariantParseError) {
@@ -406,6 +428,7 @@ export async function generatePostsAction(
           objective: validatedInput.objective,
           variants: qualityCheckedVariants,
         });
+        await recordGenerationUsage();
         return { ok: true, variants: qualityCheckedVariants, postId: saved.id };
       } catch (retryError) {
         if (retryError instanceof VariantParseError) {
