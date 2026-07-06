@@ -11,6 +11,7 @@ import type {
 } from "@/domain/generate";
 import { getPost, updatePostVariants } from "@/features/posts/posts.repository";
 import { getPositioningProfile } from "@/features/positioning/positioning.repository";
+import { getQuotaStatus, recordUsage } from "@/features/usage/usage.repository";
 import { buildVariantRegenerationPrompt } from "./generate.prompt";
 import { replaceVariant } from "./regenerate.helpers";
 
@@ -24,6 +25,9 @@ const REGENERATE_REQUEST_OPTIONS: LlmRequestOptions = {
 };
 
 const DEFAULT_REGENERATE_ERROR = "Não foi possível regenerar a variação.";
+
+const REGENERATE_QUOTA_MESSAGE =
+  "Você atingiu o limite diário de regenerações. Volte amanhã.";
 
 // Remove cercas de código que a IA às vezes adiciona ao redor do texto.
 const cleanText = (raw: string) =>
@@ -41,6 +45,12 @@ export async function regenerateVariantAction(
   const user = await requireUser();
 
   try {
+    const quota = await getQuotaStatus(user.id, "regenerate");
+    if (quota.remaining <= 0) {
+      return { ok: false, error: REGENERATE_QUOTA_MESSAGE };
+    }
+    const startedAt = Date.now();
+
     const post = await getPost(user.id, postId);
     if (!post) {
       return { ok: false, error: "Post não encontrado." };
@@ -82,6 +92,14 @@ export async function regenerateVariantAction(
 
     const newVariants = replaceVariant(variants, label, newContent);
     await updatePostVariants(user.id, postId, newVariants);
+    try {
+      await recordUsage(user.id, "regenerate", Date.now() - startedAt);
+    } catch (usageError) {
+      console.error(
+        "[regenerateVariantAction] falha ao registrar uso:",
+        usageError
+      );
+    }
     return { ok: true, content: newContent };
   } catch (error) {
     console.error("[regenerateVariantAction] erro ao regenerar variação:", error);
