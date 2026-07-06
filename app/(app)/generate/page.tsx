@@ -11,11 +11,13 @@ import { MapPin } from "lucide-react";
 
 import { requireUser } from "@/infra/auth/require-user";
 import { getPositioningProfile } from "@/features/positioning/positioning.repository";
+import { getQuotaStatus } from "@/features/usage/usage.repository";
 import GenerateForm from "@/components/generate/generate-form";
 
 export default async function GeneratePage() {
   const user = await requireUser();
   const profile = await getPositioningProfile(user.id);
+  const quota = profile ? await getQuotaStatus(user.id, "generate") : null;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
@@ -24,6 +26,11 @@ export default async function GeneratePage() {
         <p className="text-sm text-muted-foreground">
           Crie variações de post alinhadas ao seu posicionamento.
         </p>
+        {quota ? (
+          <p className="text-[11px] uppercase tracking-[0.12em] text-pen">
+            {quota.used} de {quota.limit} gerações hoje
+          </p>
+        ) : null}
       </div>
 
       {profile ? (
