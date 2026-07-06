@@ -28,6 +28,8 @@ model User {
   feedbacks      PostFeedback[]
   drafts         Draft[]
   memoryVersions PositioningMemoryVersion[]
+  usageEvents    UsageEvent[]
+  invitesUsed    InviteCode[]
 }
 
 model PositioningProfile {
@@ -122,4 +124,26 @@ model PositioningMemoryVersion {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+model UsageEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  kind       String
+  durationMs Int?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, createdAt])
+}
+
+model InviteCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  createdAt DateTime  @default(now())
+  usedById  String?
+  usedAt    DateTime?
+
+  usedBy User? @relation(fields: [usedById], references: [id], onDelete: SetNull)
 }
