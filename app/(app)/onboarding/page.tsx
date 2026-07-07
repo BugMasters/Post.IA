@@ -5,6 +5,10 @@ import { getPositioningProfile } from "@/features/positioning/positioning.reposi
 import OnboardingChat from "@/components/onboarding/onboarding-chat";
 import type { ChatMessage } from "@/domain/onboarding";
 
+// Server Actions herdam este teto da página. 60s é o máximo do Vercel Hobby;
+// combinar com LLM_MAX_TIMEOUT_MS (< 60s) para a síntese não ser morta no meio.
+export const maxDuration = 60;
+
 export default async function OnboardingPage() {
   const user = await requireUser();
   const profile = await getPositioningProfile(user.id);

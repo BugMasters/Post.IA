@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import PositioningEditor from "@/components/positioning/positioning-editor";
 import MemoryHistory from "@/components/positioning/memory-history";
 
+// Server Actions herdam este teto da página. 60s é o máximo do Vercel Hobby;
+// combinar com LLM_MAX_TIMEOUT_MS (< 60s) para o relearn não ser morto no meio.
+export const maxDuration = 60;
+
 export default async function PosicionamentoPage() {
   const user = await requireUser();
   const profile = await getPositioningProfile(user.id);

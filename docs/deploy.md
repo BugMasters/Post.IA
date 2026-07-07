@@ -15,6 +15,7 @@
    - `AUTH_TRUST_HOST=true`
    - `GEMINI_API_KEY`
    - `DAILY_GENERATION_LIMIT=10`, `DAILY_REGENERATION_LIMIT=20`
+   - `LLM_MAX_TIMEOUT_MS=55000` (teto p/ caber no limite de 60s do Hobby)
    - `SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_DSN` (projeto criado em sentry.io)
    - `SENTRY_AUTH_TOKEN` (para source maps)
 4. Deploy.
@@ -33,6 +34,9 @@ Com `DATABASE_URL`/`DIRECT_URL` de prod no shell local:
 7. Forçar um erro (rota inexistente autenticada) → evento aparece no Sentry.
 
 ## Notas
-- Timeout: geração LONGO usa até 120s. Em plano Vercel Hobby o limite de
-  Server Action é menor — se estourar, reduzir `GEMINI_TIMEOUT_MS` e/ou
-  configurar `maxDuration` na rota que dispara a action.
+- Timeout (Vercel Hobby): a função morre em 60s. As páginas que disparam LLM
+  (`/generate`, `/onboarding`, `/posicionamento`) já exportam `maxDuration = 60`.
+  Definir `LLM_MAX_TIMEOUT_MS=55000` capa TODA chamada LLM abaixo do limite —
+  inclusive a geração LONGO (que pede 120s por padrão). Sem esse teto, LONGO é
+  morto no meio no Hobby. Nota: `GEMINI_TIMEOUT_MS` sozinho não resolve, porque
+  a geração passa timeout explícito por comprimento (o teto tem precedência).
