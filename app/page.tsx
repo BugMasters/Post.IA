@@ -14,8 +14,12 @@ export default async function Home() {
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-8 p-6">
       <div className="space-y-4">
-        <h1 className="text-4xl font-bold tracking-tight">
-          Posts que soam como você — e vendem você.
+        <h1 className="font-display text-4xl italic font-medium tracking-tight">
+          Posts que soam como{" "}
+          <span className="underline decoration-pen decoration-[3px] underline-offset-4">
+            você
+          </span>{" "}
+          — e vendem você.
         </h1>
         <p className="text-lg text-muted-foreground">
           O Post.IA aprende seu posicionamento e melhora a cada uso. Sem texto

@@ -18,10 +18,11 @@ export default function SignupForm() {
     const name = String(formData.get("name") ?? "");
     const email = String(formData.get("email") ?? "");
     const password = String(formData.get("password") ?? "");
+    const inviteCode = String(formData.get("inviteCode") ?? "");
 
     startTransition(async () => {
       setError(null);
-      const result = await signupAction({ name, email, password });
+      const result = await signupAction({ name, email, password, inviteCode });
       if (!result.ok) {
         setError(result.error);
         return;
@@ -50,7 +51,11 @@ export default function SignupForm() {
         <Label htmlFor="password">Senha</Label>
         <Input id="password" name="password" type="password" minLength={8} required />
       </div>
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      <div className="space-y-1">
+        <Label htmlFor="inviteCode">Código de convite</Label>
+        <Input id="inviteCode" name="inviteCode" required />
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <Button type="submit" className="w-full" disabled={pending}>
         {pending ? "Criando..." : "Criar conta"}
       </Button>

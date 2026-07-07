@@ -10,8 +10,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -22,10 +23,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  positioning  PositioningProfile?
-  onboarding   OnboardingConversation?
-  posts        Post[]
-  feedbacks    PostFeedback[]
+  positioning    PositioningProfile?
+  onboarding     OnboardingConversation?
+  posts          Post[]
+  feedbacks      PostFeedback[]
+  drafts         Draft[]
+  memoryVersions PositioningMemoryVersion[]
+  usageEvents    UsageEvent[]
+  invitesUsed    InviteCode[]
 }
 
 model PositioningProfile {
@@ -93,4 +98,53 @@ model WaitlistEntry {
   id        String   @id @default(cuid())
   email     String   @unique
   createdAt DateTime @default(now())
+}
+
+model Draft {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String?
+  label     String
+  content   String
+  theme     String?
+  platform  String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PositioningMemoryVersion {
+  id        String   @id @default(cuid())
+  userId    String
+  memory    String
+  source    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model UsageEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  kind       String
+  durationMs Int?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind, createdAt])
+}
+
+model InviteCode {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  createdAt DateTime  @default(now())
+  usedById  String?
+  usedAt    DateTime?
+
+  usedBy User? @relation(fields: [usedById], references: [id], onDelete: SetNull)
 }

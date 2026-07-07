@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, Newsreader, Public_Sans } from "next/font/google";
 import "./globals.css";
 import AuthSessionProvider from "@/components/auth/session-provider";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const publicSans = Public_Sans({
+  variable: "--font-public-sans",
   subsets: ["latin"],
+});
+
+const newsreader = Newsreader({
+  variable: "--font-newsreader",
+  subsets: ["latin"],
+  style: ["normal", "italic"],
 });
 
 const geistMono = Geist_Mono({
@@ -27,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${publicSans.variable} ${newsreader.variable} ${geistMono.variable} antialiased`}
       >
         <AuthSessionProvider>{children}</AuthSessionProvider>
       </body>

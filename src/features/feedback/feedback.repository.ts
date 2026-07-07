@@ -15,9 +15,10 @@ export async function listUnprocessedFeedback(userId: string) {
   return prisma.postFeedback.findMany({ where: { userId, processed: false } });
 }
 
-export async function markFeedbackProcessed(ids: string[]) {
+export async function markFeedbackProcessed(userId: string, ids: string[]) {
+  // Escopo por dono mesmo com ids vindos de query própria: defesa em profundidade.
   return prisma.postFeedback.updateMany({
-    where: { id: { in: ids } },
+    where: { id: { in: ids }, userId },
     data: { processed: true },
   });
 }
@@ -51,7 +52,9 @@ export async function listPositiveExamples(
   // Limita o pool de candidatos aos N feedbacks positivos mais recentes para não
   // varrer todo o histórico do usuário no hot path da geração.
   const rows = await prisma.postFeedback.findMany({
-    where: { userId, signal: { in: [...POSITIVE_SIGNALS] } },
+    // `post: { userId }` impede que um feedback apontando para post alheio
+    // injete conteúdo de outro usuário no few-shot (defesa em profundidade).
+    where: { userId, signal: { in: [...POSITIVE_SIGNALS] }, post: { userId } },
     include: { post: true },
     orderBy: { createdAt: "desc" },
     take: POSITIVE_EXAMPLE_CANDIDATE_POOL,

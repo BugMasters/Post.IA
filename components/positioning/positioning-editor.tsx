@@ -64,7 +64,7 @@ export default function PositioningEditor({ profile }: { profile: EditableProfil
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Editar posicionamento</CardTitle>
+        <CardTitle className="font-display italic font-medium">Editar posicionamento</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {shortFields.map((key) => (

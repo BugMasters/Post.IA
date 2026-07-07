@@ -37,6 +37,8 @@ describe("listPositiveExamples", () => {
     const arg = (findMany.mock.calls[0] as [any])[0];
     expect(arg.where.userId).toBe("u1");
     expect(arg.where.signal.in).toEqual(["more_like_this", "edited", "liked"]);
+    // Defesa em profundidade: o post referenciado também precisa ser do usuário.
+    expect(arg.where.post).toEqual({ userId: "u1" });
     expect(arg.include).toEqual({ post: true });
   });
 
