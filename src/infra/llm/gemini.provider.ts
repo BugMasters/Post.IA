@@ -3,6 +3,7 @@ import {
   LlmProviderError,
   type LlmRequestOptions,
 } from "./provider";
+import { applyTimeoutCeiling } from "./timeout.helpers";
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -61,7 +62,8 @@ const parsePositiveNumber = (
 const getTimeoutMs = (requestOptions?: LlmRequestOptions) => {
   const envTimeout = process.env.GEMINI_TIMEOUT_MS?.trim() || undefined;
   const raw = requestOptions?.timeoutMs ?? envTimeout ?? DEFAULT_TIMEOUT_MS;
-  return parsePositiveNumber(raw, "GEMINI_TIMEOUT_MS");
+  const parsed = parsePositiveNumber(raw, "GEMINI_TIMEOUT_MS");
+  return applyTimeoutCeiling(parsed, process.env.LLM_MAX_TIMEOUT_MS);
 };
 
 const getMaxTokens = (requestOptions?: LlmRequestOptions) => {

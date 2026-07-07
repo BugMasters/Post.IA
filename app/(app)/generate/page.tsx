@@ -14,6 +14,10 @@ import { getPositioningProfile } from "@/features/positioning/positioning.reposi
 import { getQuotaStatus } from "@/features/usage/usage.repository";
 import GenerateForm from "@/components/generate/generate-form";
 
+// Server Actions herdam este teto da página. 60s é o máximo do Vercel Hobby;
+// combinar com LLM_MAX_TIMEOUT_MS (< 60s) para a geração não ser morta no meio.
+export const maxDuration = 60;
+
 export default async function GeneratePage() {
   const user = await requireUser();
   const profile = await getPositioningProfile(user.id);
